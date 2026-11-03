@@ -1,0 +1,8 @@
+*
+!agent
+!agent/**
+!scripts/qf_index.py
+!docker/base.lock
+!vendor/tokenizers/**
+!vendor/nemotron3/**
+**/__pycache__

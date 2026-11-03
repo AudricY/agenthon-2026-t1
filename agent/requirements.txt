@@ -1,0 +1,4 @@
+# What the agent needs beyond the sandbox base (finance-bench-sandbox, docker/requirements-sandbox.txt in the kit):
+# nothing yet. The `exemplar` agent imports numpy and pandas (with pyarrow for parquet), all three in the base;
+# docs/dry-day.md lists the base's packages. A House client is not in the base (no openai, no httpx; requests is);
+# pin it here, with its version, when the first House agent lands.
