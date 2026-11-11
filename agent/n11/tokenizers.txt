@@ -1,4 +1,4 @@
-# The tokenizers library N11 counts its bounds with (agent/n11/measure.py; lane tokens1), pinned by its hash: the
-# linux/amd64 wheel, tracked under vendor/tokenizers/ and installed in the image's n11 stage from there, with no index
-# and no dependency (Tokenizer.from_file needs none; agent/Dockerfile)
+# The tokenizers library agent/n11/measure.py counts its bounds with, pinned by its hash: the linux/amd64 wheel,
+# fetched into vendor/tokenizers/ by scripts/fetch_vendor.sh and installed by the Dockerfile from there, with no index
+# and no dependency (Tokenizer.from_file needs none)
 tokenizers==0.23.3 --hash=sha256:376851d22bcf9d650a5c3090bb83e6cf9e895fbf0595369fa4cd43c1f69b5f87

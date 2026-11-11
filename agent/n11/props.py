@@ -1,10 +1,19 @@
-"""The instruction's own properties of its outputs, read at run time (lane n11e), and the output checked against them.
+"""Reads the instruction for what it states about its outputs ("should be > 1", "rounded to 2 decimals", the keys and
+columns of each file), and checks the output files against it.
 
-E039's anatomy and the intermittent read (docs/research/e039-anatomy.md, docs/research/intermittent.md): most failing
-runs exit 0 with values that break what the instruction itself states in words ("should be > 1", "a positive
-magnitude", "starts at 1.0", "rounded to 2 decimals") or miss keys and columns it lists; the sanity checks
-(agent/n11/sanity.py) read only what any unit of a kind agrees on. This module reads the unit's own instruction with
-one rule set for every unit (rule 8: patterns over quantity names and comparatives, no unit's vocabulary).
+Step: 1 (`stated`, once a unit) and 4 (the findings after each run).
+Called by: agent/n11/solve.py (`stated` in `N11.solve`, `holds` in `N11.put_back`) and agent/n11/commands.py
+    (`checked` and `wide_found` in `Workspace.sanity`).
+Start at: `stated`, then `checked`. `Prop` is one stated property, `Stated` all of them for a unit.
+
+The rules in detail
+-------------------
+The instruction's own properties of its outputs, read at run time, and the output checked against them.
+
+Most failing scripts exit 0 with values that break what the instruction itself states in words ("should be > 1", "a
+positive magnitude", "starts at 1.0", "rounded to 2 decimals") or miss keys and columns it lists; the sanity checks
+(agent/n11/sanity.py) read only what any task of a kind agrees on. This module reads the task's own instruction with
+one rule set for every task: patterns over quantity names and comparatives, no task's vocabulary.
 
 - `stated(instruction, named)` is what the instruction states (`Stated`):
   - **properties** (`Prop`): a statement (a bullet, a table row, a sentence) binding a named quantity (a key or column
@@ -19,34 +28,27 @@ one rule set for every unit (rule 8: patterns over quantity names and comparativ
   - **the contract**: each output file's keys (a JSON block under the file's heading or after a line naming it) and
     columns (a header line in a block, a prose list right after `columns:` or `keys:`, a table of columns under the
     file's heading).
+  - **the rules** (`rule_props`): `fraction` (a name the task defines as a fraction, share or proportion of
+    something, holding a value outside [0, 1]), `header` (a backticked comma-separated header the task gives under an
+    output table's heading, a column of it absent), `rowsum` (the columns stated to sum to a figure for every row, a
+    row off past its written rounding) and `formula` (a formula `a = expr` among an output table's own columns, a row
+    off past the written rounding); and the example output's figures (`Stated.examples`: a JSON example block's
+    numbers the task writes nowhere else), which agent/n11/commands.py reads against the scripts' literals.
+  - **the six wide rules** (`Stated.wide`, `wide_stated`), checked by `wide_found`: `stated_rows` (a row count the
+    instruction states for an output table, and another number of data rows), `abs_bound` (`|x| < b` or `|x| <= b`
+    stated, a value under `x` breaking it), `key_spelling` (a name the instruction writes absent, and a name equal to
+    it up to case and separators that it never writes present), `group_count` (an explicitly stated unfiltered row
+    count for a table's group), `twin_equal` (a JSON object's with/without twins every one at one value) and
+    `unnamed_index` (a table's column with no name or pandas' `Unnamed: N`).
   The file a statement is about is the output file (`named`) its heading, its lead or its own text names.
-- `check(stated, out)` reads the output directory and returns the findings, one line each: `instruction:` a value the
-  name holds that contradicts a property (the name found as a key, a key path's last part or a column, in the
-  statement's file first), quoting the property's words; `contract:` a named key or column absent from its file (a
-  file that is absent is the checks'). A name the output does not hold is never a finding.
-- `audit(stated, out, named)` is the review's reading (lane loop1): every property `held` with what the output holds
-  of it, `broken` with its finding's line, or `unchecked` where no output name meets it; then each named output file,
-  key and column, present or absent.
-- Under `stated(..., rules=True)` (lane rules1, `AGENTHON_N11_RULES=on`; docs/research/wrong-1013.md, section 5) four
-  more kinds (`RULE_KINDS`), each read where today's parse takes none: `fraction` (a name the task defines as a
-  fraction, share or proportion of something, `x = fraction of ...`, holding a value outside [0, 1]), `header` (a
-  backticked comma-separated header the task gives under an output table's heading, a column of it absent), `rowsum`
-  (the columns stated to sum to a figure for every row, a row off past its written rounding) and `formula` (a formula
-  `a = expr` among an output table's own columns, a row off past the written rounding); and the example output's
-  figures (`Stated.examples`: a JSON example block's numbers the task writes nowhere else), which agent/n11/commands.py
-  reads against the scripts' literals. Each finding is a broken rule with the value and the task's words, never a
-  question or a count.
-- Under `stated(..., rules=True, wide=True)` (lane rules2, `AGENTHON_N11_RULES=wide`; docs/research/wrong-1014.md,
-  section 3) the instruction is read for six more rules too (`Stated.wide`, `wide_stated`), checked by `wide_found` over
-  the `Outputs` the check reads: `stated_rows` (a row count the instruction states for an output table, "= N rows",
-  "(N rows", "exactly N rows", "has N rows", and another number of data rows), `abs_bound` (`|x| < b` or `|x| <= b`
-  stated, a value under `x` breaking it), `key_spelling` (a name the instruction writes absent, and a name equal to it
-  up to case and separators that it never writes present), and `group_count` (an explicitly stated unfiltered row
-  count for a table's group), and two over the output alone: `twin_equal` (a JSON object's with/without twins every
-  one at one value), `unnamed_index` (a table's column with no name or pandas'
-  `Unnamed: N`). Each finding names the file and the name, never a number of the output's or the task's.
+- `checked(stated, out)` reads the output directory and returns the findings, one line each with its property: a
+  value the name holds that contradicts a property (the name found as a key, a key path's last part or a column, in
+  the statement's file first), quoting the property's words; and a named key or column absent from its file (a file
+  that is absent is the checks'). A name the output does not hold is never a finding.
+- `holds(prop, out)` is whether an output directory holds a property (agent/n11/solve.py's put-back).
 
-Pure: the standard library alone (pyarrow where a parquet file is read), nothing written, nothing named.
+Each finding is a broken rule with the value and the task's words, never a question or a count. Pure: the standard
+library alone (pyarrow where a parquet file is read), nothing written.
 """
 from __future__ import annotations
 
@@ -132,8 +134,8 @@ KINDS_SAID = {"gt": ">", "ge": ">=", "lt": "<", "le": "<=", "eq": "="}
 @dataclass(frozen=True)
 class Prop:
     """One property: the quantity's `names` (identifiers as written; a phrase as its words joined by spaces, `phrase`
-    set), its `kind` and bounds, the output `file` the statement is about ("" where none), the property's own words
-    (`said`) and the statement (`sentence`)."""
+    set), its `kind` and bounds, the output `file` the statement is about ("" where none) and the property's own words
+    (`said`)."""
     names: tuple[str, ...]
     kind: str               # gt ge lt le eq between sum start increasing decreasing decimals
     value: float | None = None
@@ -146,11 +148,10 @@ class Prop:
     scope: str = ""         # `decimals` with no name: "json", "table" or "all" numeric values (of `file` where set)
     file: str = ""
     said: str = ""
-    sentence: str = ""
     expr: str = ""          # `formula`: its right side as written, read against a table's columns at the check
 
     def describe(self) -> str:
-        """The property in a short line (the offline read's and the tests')."""
+        """The property in a short line."""
         who = (f"[{self.scope}{' of ' + self.file if self.file else ''}]" if self.scope else
                ("~" if self.phrase else "") + "/".join(self.names) + (f" ({self.file})" if self.file else ""))
         if self.kind == "header":
@@ -187,12 +188,8 @@ class Stated:
     keys: dict[str, list[str]] = field(default_factory=dict)
     columns: dict[str, list[str]] = field(default_factory=dict)
     numbers: frozenset = frozenset()    # every number the instruction writes (`violated`'s exemption)
-    examples: tuple[str, ...] = ()      # lane rules1: the example output's figures, as written (`examples`)
-    wide: "Wide | None" = None          # lane rules2: what the six rules read of the instruction (`wide_stated`)
-
-    @property
-    def contract(self) -> int:
-        return sum(len(v) for v in self.keys.values()) + sum(len(v) for v in self.columns.values())
+    examples: tuple[str, ...] = ()      # the example output's figures, as written (`examples`)
+    wide: "Wide | None" = None          # what the six wide rules read of the instruction (`wide_stated`)
 
 
 # ------------------------------------------------------------------------------------------------- the text
@@ -262,7 +259,6 @@ def files_in(text: str, named: tuple[str, ...]) -> list[str]:
 class Statement:
     text: str
     file: str                       # the output file of its section, "" where none
-    heads: tuple[str, ...] = ()     # a definition's head names (a bullet's or a table row's leading names)
     table: bool = False
     cells: tuple[str, ...] = ()
 
@@ -635,7 +631,7 @@ def subject(before: str, m: Match, owner_: str, heads_: tuple[str, ...]) -> tupl
     return [" ".join(words)], True
 
 
-def properties(clause: str, owner_: str, heads_: tuple[str, ...], file: str, sentence: str) -> list[Prop]:
+def properties(clause: str, owner_: str, heads_: tuple[str, ...], file: str) -> list[Prop]:
     """A clause's properties, each bound to its subject (above, which takes none past a word that is no link: a
     condition, a filter); none where a hedge or a qualifier after it makes it a property of some values only."""
     found: list[Prop] = []
@@ -652,7 +648,7 @@ def properties(clause: str, owner_: str, heads_: tuple[str, ...], file: str, sen
         said = quoted(clause, m.end)
         found.append(Prop(tuple(names), m.kind, m.value, m.upper, m.strict, m.lower_open, phrase,
                           bool(ABSOLUTE.match(after)) and m.kind in ("gt", "ge", "lt", "le"), m.percent, "", file,
-                          said, sentence))
+                          said))
     return found
 
 
@@ -697,7 +693,7 @@ def decimals(sentence: str, file: str, heads_: tuple[str, ...]) -> list[Prop]:
             words_ = " ".join(qualifiers) + " " + scope.group("noun").lower() + " " + clause.lower()
             kind = "json" if "json" in words_ else "table" if re.search(r"\b(?:csv|columns?|cells?)\b", words_) \
                 else "all"
-            found.append(Prop((), "decimals", n, strict=exact, scope=kind, file=file, said=said, sentence=sentence))
+            found.append(Prop((), "decimals", n, strict=exact, scope=kind, file=file, said=said))
             continue
         phrase = False
         if not names:
@@ -706,7 +702,7 @@ def decimals(sentence: str, file: str, heads_: tuple[str, ...]) -> list[Prop]:
                 continue
             names, phrase = [" ".join(words)], True
         found.append(Prop(tuple(dict.fromkeys(names)), "decimals", n, strict=exact, phrase=phrase, file=file,
-                          said=said, sentence=sentence))
+                          said=said))
     return found
 
 
@@ -722,7 +718,7 @@ def statement_props(statement: Statement) -> list[Prop]:
             return found
         for cell in statement.cells[1:]:
             for piece, name in clauses(normal(cell)):
-                found += properties(piece, name, (first,), statement.file, statement.text)
+                found += properties(piece, name, (first,), statement.file)
             found += decimals(cell, statement.file, (first,))
         return found
     head, body = heads(statement.text)
@@ -735,7 +731,7 @@ def statement_props(statement: Statement) -> list[Prop]:
         if imperative or EXCEPT.search(sentence):
             continue
         for piece, name in clauses(normal(sentence)):
-            for prop in properties(piece, name, heads_, statement.file, sentence):
+            for prop in properties(piece, name, heads_, statement.file):
                 if head and number_ > 0 and not prop.phrase and set(prop.names) - set(head):
                     continue
                 found.append(prop)
@@ -755,7 +751,7 @@ def block_props(block: Block) -> list[Prop]:
                 continue
             found += decimals(m.group("spec"), block.file, (key,))
             for piece, name in clauses(normal(m.group("spec"))):
-                found += [prop for prop in properties(piece, name, (key,), block.file, line) if prop.kind != "decimals"]
+                found += [prop for prop in properties(piece, name, (key,), block.file) if prop.kind != "decimals"]
     return found
 
 
@@ -849,9 +845,8 @@ def contract(statements: list[Statement], blocks: list[Block], named: tuple[str,
     return {f: v for f, v in keys.items() if v}, {f: v for f, v in columns.items() if v}
 
 
-# ------------------------------------------------------------------------------------- the rules (lane rules1)
+# ----------------------------------------------------------------------------------------------- the rules
 
-RULE_KINDS = ("fraction", "header", "rowsum", "formula")    # the kinds `stated` reads under `rules` alone
 NAMED = r"`[A-Za-z_][A-Za-z0-9_]*`|[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+"     # a name as a key's: ticked or snake
 FRACTION_DEF = re.compile(r"(?<![\w.`])(?P<name>" + NAMED + r")\s*(?:=|:|\bis\b|—|–|-{1,2})\s*(?:the\s+|a\s+)?"
                           r"(?:fraction|share|proportion)\s+of\b|(?<![\w.`])(?P<as>" + NAMED + r")\s+(?:as|in)\s+"
@@ -920,18 +915,17 @@ def named_table(text: str, file: str, named: tuple[str, ...]) -> str:
 
 def rule_props(instruction: str, statements: list[Statement], blocks: list[Block], named: tuple[str, ...],
                columns: dict[str, list[str]]) -> list[Prop]:
-    """The rules' properties (`RULE_KINDS`, above): a definition's fraction and a formula from every line, code
-    blocks' among them; an inline header and a row sum from each statement, about its output table. A header's columns
-    the contract already names (`columns`) are left to the contract; a formula's left side must be a column the
-    instruction names (the contract's or an inline header's)."""
+    """The rules' properties (above): a definition's fraction and a formula from every line, code blocks' among them; an
+    inline header and a row sum from each statement, about its output table. A header's columns the contract already
+    names (`columns`) are left to the contract; a formula's left side must be a column the instruction names (the
+    contract's or an inline header's)."""
     found: list[Prop] = []
     lines = (instruction or "").replace("\r\n", "\n").split("\n")
     for line in lines:
         for m in FRACTION_DEF.finditer(normal(line)):
             name = (m.group("name") or m.group("as")).strip("`")
             if name.lower() not in TYPES:
-                found.append(Prop((name,), "fraction", 0.0, 1.0, said=opening(normal(line)[m.start():]),
-                                  sentence=line.strip()))
+                found.append(Prop((name,), "fraction", 0.0, 1.0, said=opening(normal(line)[m.start():])))
     headed: dict[str, list[str]] = {}
     for statement in statements:
         text = normal(statement.text)
@@ -941,15 +935,14 @@ def rule_props(instruction: str, statements: list[Statement], blocks: list[Block
             fresh = [column for column in wanted if column not in columns.get(table, [])]
             headed.setdefault(table, []).extend(wanted)
             if fresh:
-                found.append(Prop(tuple(fresh), "header", file=table, said=opening(m.group(0)),
-                                  sentence=statement.text))
+                found.append(Prop(tuple(fresh), "header", file=table, said=opening(m.group(0))))
         for m in ROW_SUM.finditer(text):
             sentence = re.split(r"(?<=[.!?:])\s+", text[:m.start("num")])[-1]      # its own sentence's names
             names = tuple(name for _, _, name in identifiers(sentence) if not files_in(name, ()))
             start = m.start("num") - len(sentence)
             found.append(Prop(names if len(names) > 1 else (), "rowsum", float(m.group("num")),
                               percent=bool(m.group("pct")), file=table,
-                              said=quoted(text[start:m.end()], m.end() - start), sentence=statement.text))
+                              said=quoted(text[start:m.end()], m.end() - start)))
     known = {column for file in (*columns, *headed) for column in (*columns.get(file, ()), *headed.get(file, ()))}
     for line in lines:
         plain = line.replace("×", "*").replace("−", "-").replace("·", "*")
@@ -960,15 +953,14 @@ def rule_props(instruction: str, statements: list[Statement], blocks: list[Block
         for lhs, rhs in candidates:
             rhs = rhs.strip().rstrip(".,")
             if lhs in known and rhs and re.search(r"[-+*/(]", rhs):
-                found.append(Prop((lhs,), "formula", said=opening(f"{lhs} = {rhs}"), sentence=line.strip(),
-                                  expr=rhs))
+                found.append(Prop((lhs,), "formula", said=opening(f"{lhs} = {rhs}"), expr=rhs))
     return found
 
 
-def stated(instruction: str, named: tuple[str, ...] = (), rules: bool = False, wide: bool = False) -> Stated:
-    """What the instruction states of its outputs (above), each property once; under `rules` (lane rules1) the
-    rules' kinds after today's (`rule_props`) and the example output's figures (`examples`); under `wide` too (lane
-    rules2) what the six rules read (`wide_stated`)."""
+def stated(instruction: str, named: tuple[str, ...] = ()) -> Stated:
+    """What the instruction states of its outputs (above), each property once: the properties, the rules' kinds after
+    them (`rule_props`), the contract, the example output's figures (`examples`) and what the six wide rules read
+    (`wide_stated`)."""
     statements, blocks = segment(instruction or "", tuple(named))
     props: list[Prop] = []
     for statement in statements:
@@ -976,10 +968,9 @@ def stated(instruction: str, named: tuple[str, ...] = (), rules: bool = False, w
     for block in blocks:
         props += block_props(block)
     keys, columns = contract(statements, blocks, tuple(named))
-    if rules:
-        summed = {frozenset(prop.names) for prop in props if prop.kind == "sum" and len(prop.names) > 1}
-        props += [prop for prop in rule_props(instruction, statements, blocks, tuple(named), columns)
-                  if not (prop.kind == "rowsum" and frozenset(prop.names) in summed)]    # today's `sum` reads it
+    summed = {frozenset(prop.names) for prop in props if prop.kind == "sum" and len(prop.names) > 1}
+    props += [prop for prop in rule_props(instruction, statements, blocks, tuple(named), columns)
+              if not (prop.kind == "rowsum" and frozenset(prop.names) in summed)]    # a `sum` reads it already
     unique, seen = [], set()
     for prop in props:
         key = (prop.names, prop.kind, prop.value, prop.upper, prop.scope, prop.file, prop.expr)
@@ -988,8 +979,8 @@ def stated(instruction: str, named: tuple[str, ...] = (), rules: bool = False, w
             unique.append(prop)
     written = frozenset(value for value in (number(token) for token in re.findall(NUM, instruction or ""))
                         if value is not None)
-    return Stated(unique, keys, columns, written, examples(blocks, instruction) if rules else (),
-                  wide_stated(instruction, tuple(named)) if rules and wide else None)
+    return Stated(unique, keys, columns, written, examples(blocks, instruction),
+                  wide_stated(instruction, tuple(named)))
 
 
 # ----------------------------------------------------------------------------------------------- the outputs
@@ -1036,13 +1027,12 @@ class Outputs:
     numbers in order; a list of records' fields as columns), each table's columns; and the files' raw shapes for
     the contract."""
 
-    def __init__(self, out: Path, row_counts: bool = True) -> None:
+    def __init__(self, out: Path) -> None:
         self.values: list[Values] = []
         self.index: dict[tuple[str, str, bool], Values] = {}
         self.json: dict[str, object] = {}
         self.headers: dict[str, list[str]] = {}
-        self.rows: dict[str, int] = {}                  # each table's data rows read (lane rules2's `stated_rows`)
-        self.row_counts = row_counts
+        self.rows: dict[str, int] = {}                  # each table's data rows read (`stated_rows`)
         self.incomplete: set[str] = set()
         out = Path(out)
         try:
@@ -1117,8 +1107,7 @@ class Outputs:
         for row in itertools.islice(reader, MAX_ROWS):
             if not any(part.strip() for part in row):
                 continue
-            if self.row_counts:
-                self.rows[file] += 1
+            self.rows[file] += 1
             for index, column in enumerate(header):
                 cell = row[index].strip() if index < len(row) else ""
                 self.add(file, column, cell_number(cell), cell, table=True, ordered=True)
@@ -1222,8 +1211,8 @@ def violated(prop: Prop, values: Values, exempt: frozenset = frozenset()) -> tup
 
 def breaks(prop: Prop, n: float) -> bool:
     """Whether a value breaks a bound, an equality or an interval: a strict one exactly, a non-strict one past a
-    relative `TOLERANCE`; a strict bound at zero only by the value's sign (a zero there is an underflow as often as
-    an error: E020 to E030's solved greeks hold gamma and vega of 0 on their shortest maturities)."""
+    relative `TOLERANCE`; a strict bound at zero only by the value's sign (a zero there is an underflow as often as an
+    error: a solved option's gamma and vega are 0 at its shortest maturities)."""
     slack = TOLERANCE * max(1.0, abs(prop.value or 0.0))
     if prop.kind == "gt":
         return n < 0 if prop.value == 0 else not n > prop.value
@@ -1271,8 +1260,8 @@ def rows_summing(prop: Prop, outputs: Outputs) -> list[str]:
     return found
 
 
-# lane rules1: the rules over an output table's columns (`header`, `rowsum`, `formula`), each the finding's lines (at
-# most one a table) and the tables it reads (`TABLE_READS`, the audit's `held`)
+# the rules over an output table's columns (`header`, `rowsum`, `formula`), each the finding's lines (at most one a
+# table) and the tables it reads (`TABLE_READS`, `audited`'s `held`)
 
 DATED = frozenset({"date", "time", "timestamp", "datetime", "index", "id", "year", "month", "day", "period", "row"})
 FORMULA_TOLERANCE = 1e-3        # a formula's row off by more than this, relative, past its written rounding
@@ -1449,7 +1438,7 @@ TABLE_READS = {"header": header_read, "rowsum": rows_read, "formula": formula_re
 
 
 def holds(prop: Prop, out: Path) -> bool:
-    """Lane rules1's put-back (agent/n11/solve.py): whether the output directory `out` holds `prop`, read and kept."""
+    """Whether the output directory `out` holds `prop` (agent/n11/solve.py's put-back)."""
     try:
         return audited(prop, Outputs(out), frozenset()).startswith("held:")
     except Exception:  # noqa: BLE001 - an output that cannot be read holds nothing here
@@ -1464,7 +1453,7 @@ def said_of(prop: Prop, held: Values, broke: tuple[int, float | str]) -> str:
             f"with more than {prop.value:g} decimals"
         return f"{where} holds {broke[0]} value(s) {how}, e.g. {broke[1]}, which the task states: \"{prop.said}\""
     value = shown(broke[1])
-    if prop.kind == "fraction":         # lane rules1: the value and the definition, no count
+    if prop.kind == "fraction":         # the value and the definition, no count
         return f"{where} {'holds' if held.table or held.ordered else 'is'} {value}; the task defines it as a " \
                f"fraction: \"{prop.said}\""
     head = f"{where} holds {broke[0]} value(s) that break it, e.g. {value}" if broke[0] > 1 or held.table or \
@@ -1472,15 +1461,9 @@ def said_of(prop: Prop, held: Values, broke: tuple[int, float | str]) -> str:
     return f"{head}, which the task states: \"{prop.said}\" ({prop.describe().split(': ', 1)[1]})"
 
 
-def check(stated_: Stated, out: Path) -> tuple[list[str], list[str]]:
-    """The findings over the output directory: (`instruction:` lines, `contract:` lines), without their prefix."""
-    found, missing = checked(stated_, out)
-    return [line for _, line in found], missing
-
-
 def checked(stated_: Stated, out: Path, outputs: Outputs | None = None) -> tuple[list[tuple[Prop, str]], list[str]]:
-    """`check`'s findings, each `instruction:` line with the property it breaks (lane rules1 knows its rules' by it);
-    over `outputs` where the caller read the output already (lane rules2's six read the same)."""
+    """The findings over the output directory: each `instruction:` line (without its prefix) with the property it
+    breaks, and the `contract:` lines; over `outputs` where the caller read the output already."""
     outputs = outputs if outputs is not None else Outputs(out)
     said: list[tuple[Prop, str]] = []
     for prop in stated_.props:
@@ -1544,9 +1527,8 @@ def has_key(doc: object, key: str) -> bool:
     return True
 
 
-# ------------------------------------------------------------------------------------ the six rules (lane rules2)
+# ------------------------------------------------------------------------------------------ the six wide rules
 
-WIDE_RULES = ("stated_rows", "abs_bound", "twin_equal", "key_spelling", "unnamed_index", "group_count")
 STATED_ROWS = re.compile(r"(?:(?:=|\()\s*|\bexactly\s+|\bhas\s+(?:exactly\s+)?)(\d{1,6})\s+(?:data\s+)?rows?\b", re.I)
 NOT_COUNT = re.compile(r"(?:at least|at most|minimum|maximum|more than|fewer than|less than|up to|first|last|top|"
                        r"bottom|over|>=|<=|>|<)\s*$", re.I)    # a bound or a part of the rows before it: no count
@@ -1834,9 +1816,9 @@ def group_counts(wide: Wide, outputs: Outputs) -> list[tuple[str, str, str]]:
 
 
 def wide_found(wide: Wide | None, outputs: Outputs) -> list[tuple[str, str, str]]:
-    """The six rules' findings over the output (`WIDE_RULES`' order), each (rule, what it is known by across runs: the
-    rule, the file and the name, its line as said); the four that read the instruction said as `instruction:` lines,
-    as lane rules1's are; at most `PER_RULE` a rule and file. A rule that cannot read the output holds none."""
+    """The six rules' findings over the output, each (rule, what it is known by across runs: the rule, the file and the
+    name, its line as said); the four that read the instruction said as `instruction:` lines, as the rules' are; at most
+    `PER_RULE` a rule and file. A rule that cannot read the output holds none."""
     wide = wide if wide is not None else Wide()
     found = []
     for rule in (lambda: rows_unstated(wide, outputs), lambda: bounds_broken(wide, outputs),
@@ -1857,29 +1839,14 @@ def wide_found(wide: Wide | None, outputs: Outputs) -> list[tuple[str, str, str]
     return said
 
 
-# ------------------------------------------------------------------------------------------------- the audit
-
-
-AUDIT_CHARS = 300               # an audit's line, at most
-AUDIT_NAMES = 24                # the keys or columns an audit's line names, each list, at most
-AUDIT_LIST = 180                # and their characters, each list, at most: the rest counted, never cut mid-name
-
-
-def audit(stated_: Stated, out: Path, named: tuple[str, ...] = ()) -> tuple[list[str], list[str]]:
-    """The review's reading of the output against the instruction (lane loop1), one line each: every property,
-    `held` with what the output holds of it, `broken` with its finding's line, or `unchecked` where no output name
-    meets it or its values cannot be read for its kind; then the output files the instruction names (`named`), each
-    present or absent, and each file's keys and columns it names, each present or absent (a file absent or unread
-    said so)."""
-    outputs = Outputs(out)
-    lines = [audited(prop, outputs, stated_.numbers)[:AUDIT_CHARS] for prop in stated_.props]
-    return lines, [line[:AUDIT_CHARS] for line in contract_audit(stated_, outputs, Path(out), tuple(named))]
+# ------------------------------------------------------------------------------------- a property's reading
 
 
 def audited(prop: Prop, outputs: Outputs, exempt: frozenset) -> str:
-    """One property's line (`audit`)."""
+    """One property's reading: `held` with what the output holds of it, `broken` with its finding's line, or
+    `unchecked` where no output name meets it or its values cannot be read for its kind."""
     said = f"\"{prop.said}\" ({prop.describe().split(': ', 1)[1]})"
-    if prop.kind in TABLE_RULES:            # lane rules1's kinds over a table: the tables they read
+    if prop.kind in TABLE_RULES:            # the rules over a table: the tables they read
         broke = TABLE_RULES[prop.kind](prop, outputs)
         if broke:
             return f"broken: {broke[0]}"
@@ -1956,613 +1923,3 @@ def read_of(prop: Prop, values: Values) -> str:
     if len(numbers) == 1:
         return f"{where} = {shown(numbers[0])}"
     return f"{where}: {len(numbers)} values in [{shown(min(numbers))}, {shown(max(numbers))}]"
-
-
-def listed(names: list[str]) -> str:
-    """The names, each whole, within `AUDIT_NAMES` and `AUDIT_LIST` characters, the rest counted."""
-    kept: list[str] = []
-    for name in names[:AUDIT_NAMES]:
-        if kept and len(", ".join([*kept, f"`{name}`"])) > AUDIT_LIST:
-            break
-        kept.append(f"`{name}`")
-    return ", ".join(kept) + (f" and {len(names) - len(kept)} more" if len(names) > len(kept) else "")
-
-
-def present(what: str, wanted: list[str], have: set[str] | list[str]) -> str:
-    """`<what> (N): present ...; absent ...`, the names in the instruction's order."""
-    here = [name for name in wanted if name in have]
-    gone = [name for name in wanted if name not in have]
-    return f"{what} ({len(wanted)}): " + "; ".join(part for part in (
-        f"present {listed(here)}" if here else "", f"absent {listed(gone)}" if gone else "") if part)
-
-
-def contract_audit(stated_: Stated, outputs: Outputs, out: Path, named: tuple[str, ...]) -> list[str]:
-    """The named output files and the keys and columns the instruction names, each present or absent (`audit`)."""
-    lines = [present("the output files the task names", list(named), {name for name in named
-                                                                     if (out / name).is_file()})] if named else []
-    for file, wanted in stated_.keys.items():
-        if file in outputs.json:
-            lines.append(present(f"{file} keys", wanted, {key for key in wanted if has_key(outputs.json[file], key)}))
-        else:
-            lines.append(f"{file} keys ({len(wanted)}): unread, the file " + (
-                "is absent" if not (out / file).is_file() else "does not read as JSON"))
-    for file, wanted in stated_.columns.items():
-        if file in outputs.headers:
-            lines.append(present(f"{file} columns", wanted, set(outputs.headers[file])))
-        else:
-            lines.append(f"{file} columns ({len(wanted)}): unread, the file " + (
-                "is absent" if not (out / file).is_file() else "does not read as a table"))
-    return lines
-
-
-# ------------------------------------------------------------------------------- the output contract (lane contract1)
-
-TERM_KINDS = ("keys", "columns", "decimals", "na", "type", "labels", "nested", "rows")
-FORMATS = {".json": "json", ".jsonl": "jsonl", ".csv": "csv", ".tsv": "tsv", ".parquet": "parquet",
-           ".pqt": "parquet", ".txt": "txt", ".md": "md", ".html": "html", ".xlsx": "xlsx"}
-TABLE_FORMATS = ("csv", "tsv", "parquet")
-LIST_WHAT = re.compile(r"\b(?:keys?|columns?|fields?|headers?|structure)\b", re.I)
-EXACT_SET = re.compile(r"\b(?:exactly|only)\s+(?:these|the\s+following|this|the|\d+|" + "|".join(NUMBER_WORDS)
-                       + r")\s+(?:top-level\s+)?(?:keys|columns|fields|structure)\b"
-                       r"|\bno\s+(?:other|extra|additional)\s+(?:keys|columns|fields)\b"
-                       r"|\b(?:top-level\s+)?(?:keys|columns)\s+must\s+be\b(?=\s*:?\s*`)", re.I)
-ORDER_SET = re.compile(r"\b(?:in\s+)?(?:this|the\s+listed|the\s+following|the\s+exact|exactly\s+(?:this|the\s+listed|"
-                       r"the))\s+(?:exact\s+)?order\b|\bexact\s+order\b|\bin\s+order\s*:|\breordered\b", re.I)
-ABOVE = re.compile(r"\b(?:above|shown\s+before)\b", re.I)
-LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?:\*\*)?`(?P<name>[^`\n]{1,80})`(?:\*\*)?")
-INLINE_LIST = re.compile(r"^`(?P<names>[^`\n]+,[^`\n]+)`[.:]?$")
-COLUMN_NAME = re.compile(r"^[^\s`,]{1,80}$")
-KEY_NAME = re.compile(r"^[A-Za-z_][\w\-.]{0,79}$")
-TEMPLATE_TOKEN = re.compile(r'"(?:[^"\\\n]|\\.)*"|<[^<>\n]*>|[{}\[\]:,]|\.\.\.|…|[^\s{}\[\]:,"<>]+')
-SPEC_TYPES = (("bool", re.compile(r"\bbool(?:ean)?\b|\btrue\s*[|/]\s*false\b", re.I)),
-              ("int", re.compile(r"\bint(?:eger)?(?:64|32)?\b", re.I)),
-              ("number", re.compile(r"\b(?:float(?:64)?|number|double|numeric|real)\b", re.I)),
-              ("str", re.compile(r"\bstr(?:ing)?\b|\bdate(?:time)?\b|YYYY|\bticker\b|\bname\b|\bidentifier\b", re.I)),
-              ("list", re.compile(r"\blist\b|\barray\b", re.I)),
-              ("object", re.compile(r"\bdict\b|\bobject\b|\bmapping\b", re.I)))
-EMPTY_WORD = re.compile(r"\b(?:as|leave|leaves|left|write|written\s+as|use|uses|set\s+to|be|remain|remains|stay)\s+"
-                        r"(?:it\s+|them\s+|the\s+cells?\s+)?(?:an?\s+)?(?:empty|blank)\b(?!-)|\bempty\s+strings?\b"
-                        r"|\bblank\s+cells?\b", re.I)
-NAN_WORD = re.compile(r"\b(?i:to|as|be|report|write|written\s+as|use|uses|have|has)\s+`?NaN`?(?![\w-])"
-                      r"|`?NaN`?\s+(?i:if|when|where)\s+(?i:it\s+is\s+)?(?i:not\s+available|unavailable|missing|"
-                      r"not\s+applicable|absent|undefined)\b")      # the word `NaN` as written, its verbs in any case
-NULL_WORD = re.compile(r"\b(?:use|uses|report|reported\s+as|write|written\s+as|be|as|set\s+to|return|returns)\s+"
-                       r"(?:a\s+)?(?:JSON\s+)?`?null`?(?![\w-])", re.I)
-BOOLEAN_WORDS = re.compile(r"`(true|false|True|False|TRUE|FALSE)`")     # a table column's two literal words
-LABEL_SET = re.compile(r"\b(?:is|are|must\s+be|should\s+be|takes?|holds?)\s+(?:exactly\s+)?one\s+of\b|^\W*one\s+of\b"
-                       r"|\b(?:labels?|values?)\s+(?:are|is|must\s+be)\b|\bvalid\s+(?:labels?|values?)\b", re.I)
-LABEL_PAIR = re.compile(r"`(?P<subject>[^`]+)`\s+(?:is|must\s+be|should\s+be)\s+(?:either\s+)?`(?P<a>[^`]+)`\s+or\s+"
-                        r"`(?P<b>[^`]+)`")
-IN_ORDER = re.compile(r"\bin\s+this\s+order\b", re.I)
-SORT_BY = re.compile(r"\b(?:sort(?:ed)?|order(?:ed)?)\s+(?:the\s+)?(?:rows\s+)?(?P<way>alphabetically\s+|chronologically\s+|"
-                     r"(?:in\s+)?(?:ascending|descending)\s+(?:order\s+)?)?(?:by|on)\s+(?P<keys>[^.;:()\n]+)"
-                     r"|\bin\s+order\s+\((?P<inner>[^)]+)\)"
-                     r"|\bsort(?:ed)?\s+(?:the\s+)?rows\s+in\s+(?P<dir>ascending|descending)\s+`(?P<col>[^`]+)`"
-                     r"|\bin\s+(?P<dir2>ascending|descending)\s+`(?P<col2>[^`]+)`\s+order\b", re.I)
-SORT_KEY = re.compile(r"^\s*(?:`(?P<col>[^`]{1,80})`|(?P<bare>[A-Za-z_][\w\-]{0,79}))\s*\(?(?P<dir>ascending|descending|"
-                      r"asc|desc)?\)?\s*$", re.I)
-SORT_SPLIT = re.compile(r",?\s+then\s+(?:by\s+)?|,\s*and\s+|,\s*|\s+and\s+", re.I)
-LISTED_ROWS = re.compile(r"\brows?\s+(?:must\s+|should\s+)?(?:appear|are|be|come)\s+in\s+(?:this|the\s+following)\s+"
-                         r"(?:exact\s+)?(?:\w+\s+)?order\b|\bsort\s+(?:the\s+)?rows\s+in\s+this\s+(?:exact\s+)?order\b",
-                         re.I)
-WAIVER = re.compile(r"\b(?:harmless|tolerat\w*|semantic\s+rather\s+than\s+byte|not\s+byte-exact|any\s+reasonable\s+"
-                    r"precision|need\s+not|do(?:es)?\s+not\s+need|(?:is|are)\s+ignored|do(?:es)?\s+not\s+matter)\b", re.I)
-WAIVED = (("rows", re.compile(r"\brow\s+order\b", re.I)), ("order", re.compile(r"\b(?:key|column)\s+order\b", re.I)),
-          ("decimals", re.compile(r"\bprecision\b|\bdecimals?\b|\btrailing\s+zeros?\b", re.I)),
-          ("na", re.compile(r"\bblank\b|\bnull\b|\bempty\b", re.I)))
-
-
-@dataclass(frozen=True)
-class Term:
-    """One term of an output file's contract as the instruction states it (`terms`): its kind (`TERM_KINDS`), the
-    output file, and what the text fixes. `keys` and `columns`: the names in the text's order, under `path` (a JSON
-    object's, () the top level), `exact` where it says exactly or only, `ordered` where it fixes their order.
-    `decimals`: the names or the `scope` ("json", "table", "all") rounded to `value` decimals, `strict` where exactly
-    (today's parse, `decimals`). `na`: the word for a missing cell of `names` ("" for empty, "NaN"), or a JSON file's
-    "null". `type`: the native type of the value at `path` (`int`, `number`, `bool`, `str`, `list`, `object`).
-    `labels`: the values the one column or key of `names` may hold (`value`), two boolean words among such sets.
-    `nested`: a JSON value's whole path. `rows`: the sort
-    columns (`names`, `value` each one's direction) or the listed values' order (`value` "listed")."""
-    kind: str
-    file: str
-    names: tuple[str, ...] = ()
-    path: tuple[str, ...] = ()
-    exact: bool = False
-    ordered: bool = False
-    value: object = None
-    strict: bool = False
-    scope: str = ""
-    said: str = ""
-
-    def describe(self) -> str:
-        """The term in a short line (the offline read's, the replay's and the tests')."""
-        where = f"{self.file}" + (f":{'.'.join(self.path)}" if self.path else "")
-        if self.kind in ("keys", "columns"):
-            flags = "/".join(flag for flag, on in (("exact", self.exact), ("ordered", self.ordered)) if on)
-            return f"{where}: {self.kind} {', '.join(self.names)} [{flags}]"
-        if self.kind == "decimals":
-            who = ", ".join(self.names) or f"[{self.scope}]"
-            return f"{where}: {who} {'at exactly' if self.strict else 'rounded to'} {self.value} decimals"
-        if self.kind == "na":
-            return f"{where}: {', '.join(self.names) or '[every value]'} missing as {self.value!r}"
-        if self.kind == "type":
-            return f"{where}: {self.value}"
-        if self.kind == "labels":
-            return f"{where}: {', '.join(self.names)} one of {', '.join(map(str, self.value))}"
-        if self.kind == "rows":
-            return f"{where}: rows " + ("in the listed order of " + ", ".join(self.names) if self.value == "listed"
-                                        else "sorted by " + ", ".join(f"{name} {way}" for name, way in
-                                                                      zip(self.names, self.value)))
-        return f"{where}: present"
-
-
-@dataclass
-class Terms:
-    """An instruction's output contract: each named output file's format, the terms, the keys and columns today's
-    lines already read by file (`Stated.keys` and `Stated.columns`, and lane rules1's inline headers where its rules
-    are read), which the check leaves to them, and the check's kinds the text itself waives ("harmless differences in
-    ... row order")."""
-    files: dict[str, str] = field(default_factory=dict)
-    terms: list[Term] = field(default_factory=list)
-    today: dict[str, frozenset] = field(default_factory=dict)
-    waived: frozenset = frozenset()
-
-
-@dataclass
-class Piece:
-    kind: str           # heading, text (a paragraph), item (a bullet with its continuation), code, row
-    text: str
-    file: str           # the output file of its section, or the one file it names itself
-    lines: tuple[str, ...] = ()
-    lang: str = ""      # code: the fence's language
-
-
-def layout(instruction: str, named: tuple[str, ...]) -> list[Piece]:
-    """The instruction as pieces in their order, each with its output file as `segment` assigns it: a heading's, else
-    a paragraph's that names one file (until the next heading), else the one file a piece names itself."""
-    lines = (instruction or "").replace("\r\n", "\n").split("\n")
-    pieces: list[Piece] = []
-    levels: list[tuple[int, str]] = []
-    local = ""
-    current: list[str] = []
-    kind = ""
-
-    def section() -> str:
-        return local or next((file for _, file in reversed(levels) if file), "")
-
-    def flush() -> None:
-        nonlocal current, kind, local
-        text = " ".join(part.strip() for part in current if part.strip())
-        if text:
-            files = files_in(text, named)
-            pieces.append(Piece(kind, text, files[0] if len(files) == 1 else section()))
-            if kind == "text" and len(files) == 1:
-                local = files[0]
-        current, kind = [], ""
-
-    k = 0
-    while k < len(lines):
-        line = lines[k]
-        fence = FENCE.match(line)
-        if fence:
-            flush()
-            lang = line.strip()[3:].strip().split(" ")[0].lower()
-            body = []
-            k += 1
-            while k < len(lines) and not lines[k].strip().startswith(fence.group(1)):
-                body.append(lines[k])
-                k += 1
-            pieces.append(Piece("code", "\n".join(body), section(), tuple(body), lang))
-            k += 1
-            continue
-        heading = HEADING.match(line)
-        if heading:
-            flush()
-            level = len(heading.group(1))
-            levels = [(lv, file) for lv, file in levels if lv < level]
-            files = files_in(heading.group(2), named)
-            levels.append((level, files[0] if files else ""))
-            local = ""
-            pieces.append(Piece("heading", heading.group(2).strip(), section()))
-        elif not line.strip():
-            flush()
-        elif line.lstrip().startswith("|"):
-            flush()
-            cells = tuple(cell.strip() for cell in line.strip().strip("|").split("|"))
-            if not all(re.fullmatch(r":?-{2,}:?", cell) for cell in cells if cell):
-                pieces.append(Piece("row", line.strip(), section(), cells))
-        elif BULLET.match(line):
-            flush()
-            current, kind = [line.strip()], "item"
-        elif current:
-            current.append(line)
-        else:
-            current, kind = [line], "text"
-        k += 1
-    flush()
-    return pieces
-
-
-def format_of(file: str) -> str:
-    return FORMATS.get(Path(file).suffix.lower(), "")
-
-
-def header_of(lines: tuple[str, ...]) -> list[str]:
-    """A code block's header: its first line, joined with the next while a line ends on a comma; [] where a name is
-    no column's (a space, a backtick) or fewer than two."""
-    rows = [line.strip() for line in lines if line.strip()]
-    if not rows:
-        return []
-    text = rows[0]
-    for row in rows[1:]:
-        if not text.endswith(","):
-            break
-        text += row
-    names = [name.strip().strip("`") for name in text.split(",")]
-    return names if len(names) >= 2 and all(COLUMN_NAME.match(name) for name in names) else []
-
-
-def template(text: str):
-    """A JSON template block (`{"a": <float>, "b": {"value": <int>}}`, `...` for more) as a tree: ("object", [(key,
-    node)], open), ("list", item or None, open) or ("leaf", spec, quoted), `spec` a placeholder's words (None for a
-    literal); None where the block is no template."""
-    text = re.sub(r"(?m)(^|\s)//[^\n]*$", r"\1", text)
-    tokens = TEMPLATE_TOKEN.findall(text)
-    if not tokens or tokens[0] not in ("{", "["):
-        return None
-
-    def value(k: int):
-        token = tokens[k]
-        if token == "{":
-            items, opened, k = [], False, k + 1
-            while k < len(tokens) and tokens[k] != "}":
-                if tokens[k] in ("...", "…", ","):
-                    opened |= tokens[k] != ","
-                    k += 1
-                    continue
-                if not tokens[k].startswith('"') or k + 1 >= len(tokens) or tokens[k + 1] != ":":
-                    raise ValueError("no key")
-                key = json.loads(tokens[k])
-                node, k = value(k + 2)
-                items.append((key, node))
-            if k >= len(tokens):
-                raise ValueError("unclosed")
-            return ("object", items, opened), k + 1
-        if token == "[":
-            item, opened, k = None, False, k + 1
-            while k < len(tokens) and tokens[k] != "]":
-                if tokens[k] in ("...", "…", ","):
-                    opened |= tokens[k] != ","
-                    k += 1
-                    continue
-                node, k = value(k)
-                item = item or node
-            if k >= len(tokens):
-                raise ValueError("unclosed")
-            return ("list", item, opened), k + 1
-        if token.startswith("<"):
-            return ("leaf", token[1:-1], False), k + 1
-        if token.startswith('"'):
-            inner = json.loads(token)
-            quoted = re.fullmatch(r"<([^<>]*)>", inner)
-            return ("leaf", quoted.group(1) if quoted else None, True), k + 1
-        if token in ("}", "]", ":"):
-            raise ValueError("misplaced")
-        return ("leaf", None, False), k + 1
-
-    try:
-        node, _ = value(0)
-    except (ValueError, IndexError, json.JSONDecodeError, RecursionError):
-        return None
-    return node
-
-
-def spec_type(spec: str | None, quoted: bool) -> str | None:
-    """A placeholder's type (`SPEC_TYPES`): the one its words name (null aside); a quoted placeholder naming none a
-    string; None where it names none or two."""
-    if spec is None:
-        return None
-    named = [kind for kind, pattern in SPEC_TYPES if pattern.search(spec)]
-    if "number" in named and "int" in named:
-        named.remove("int")         # `<float, an int count of decimals>` reads as its first word's
-    if len(named) == 1:
-        return named[0]
-    return "str" if quoted and not named else None
-
-
-def key_name(key: str) -> bool:
-    return bool(KEY_NAME.match(key)) and key.lower() not in PLACEHOLDERS
-
-
-def walk(node, path: tuple[str, ...]):
-    """A template's (path, node) pairs, depth first; no paths under placeholder keys, or numeric example keys in
-    an open map. Closed objects keep their literal numeric keys."""
-    yield path, node
-    if node[0] == "object":
-        if not all(key_name(key) for key, _ in node[1]):
-            return
-        for key, inner in node[1]:
-            if node[2] and re.search(r"\d", key):
-                continue
-            yield from walk(inner, (*path, key))
-    elif node[0] == "list" and node[1] is not None:
-        yield from walk(node[1], (*path, "[]"))
-
-
-def template_terms(node, file: str, said: str) -> list[Term]:
-    """A JSON template's terms: each placeholder's native type (`spec_type`) and each value's whole path two keys deep
-    or more (`nested`)."""
-    found = []
-    for path, inner in walk(node, ()):
-        keys = [part for part in path if part != "[]"]
-        if inner[0] == "leaf":
-            kind = spec_type(inner[1], inner[2])
-            if kind is not None and keys:
-                found.append(Term("type", file, path=path, value=kind, said=said))
-        elif inner[0] == "list" and keys and inner[1] is not None and inner[1][0] == "leaf":
-            found.append(Term("type", file, path=path, value="list", said=said))
-        if len(keys) >= 2 and (inner[0] == "leaf" or inner[0] == "list" and (inner[1] is None or inner[1][0] == "leaf")):
-            found.append(Term("nested", file, path=path, said=said))
-    return found
-
-
-def object_at(node, path: tuple[str, ...]):
-    """The template's object at `path` (its top level at ()), or None."""
-    for key in path:
-        if node is None or node[0] != "object":
-            return None
-        node = dict(node[1]).get(key)
-    return node if node is not None and node[0] == "object" else None
-
-
-def lead_list(pieces: list[Piece], k: int, lead_end: int, file: str, last_code: dict[str, Piece]):
-    """The names a lead (`pieces[k]`, its matched words ending at `lead_end`) lists for `file`: its own backticked
-    names after a colon past the words; else the block above (where it says so) or the next piece's: a code block (a
-    JSON template's keys, a table's header), an inline header, consecutive list items each opening on a backticked name,
-    or a table's first cells. (names, the template node or None); ([], None) where none reads whole."""
-    piece = pieces[k]
-    rest = piece.text[lead_end:]
-    stop = re.search(r"\.(?:\s|$)", rest)
-    inline = [m.group(1).strip('"') for m in re.finditer(r"`([^`\n]{1,80})`", rest[:stop.start() if stop else None])]
-    inline = [name for name in inline if name.lower() not in TYPES]
-    if len(inline) >= 2:
-        return inline, None
-    if ABOVE.search(piece.text):
-        block = last_code.get(file)
-        return (block_names(block, file) if block is not None else ([], None))
-    nxt = k + 1
-    if nxt >= len(pieces):
-        return [], None
-    after = pieces[nxt]
-    if after.kind == "code":
-        return block_names(after, file)
-    if after.kind == "text":
-        found = INLINE_LIST.match(after.text.strip())
-        if found:
-            names = [name.strip() for name in found.group("names").split(",")]
-            return (names, None) if all(COLUMN_NAME.match(name) for name in names) else ([], None)
-        return [], None
-    if after.kind == "item":
-        names = []
-        for each in pieces[nxt:]:
-            if each.kind != "item":
-                break
-            found = LIST_ITEM.match(each.text)
-            if not found:
-                return [], None
-            names.append(found.group("name").strip())
-        return names, None
-    if after.kind == "row":
-        names, header = [], True
-        for each in pieces[nxt:]:
-            if each.kind != "row":
-                break
-            first = each.lines[0].strip(" *") if each.lines else ""
-            if header and first.strip("`").lower() in ("column", "columns", "field", "key", "name", "col"):
-                header = False
-                continue
-            header = False
-            ticked = re.fullmatch(r"`([^`]+)`", first)
-            if not ticked:
-                return [], None
-            names.append(ticked.group(1))
-        return names, None
-    return [], None
-
-
-def block_names(block: Piece, file: str):
-    """A code block's names for `file`: a JSON template's top-level keys (a list of records' keys under `[]`), the
-    template with them; a table's header."""
-    if format_of(file) == "json":
-        node = template(block.text)
-        if node is None:
-            return [], None
-        top = node if node[0] == "object" else node[1] if node[0] == "list" else None
-        if top is None or top[0] != "object" or not all(key_name(key) for key, _ in top[1]):
-            return [], None
-        return [key for key, _ in top[1]], node
-    if format_of(file) in TABLE_FORMATS:
-        return header_of(block.lines), None
-    return [], None
-
-
-def sort_keys(text: str, known=()) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
-    """The sort a sentence states over columns (`sorted by \\`a\\` ascending, then \\`b\\` descending`; `sorted
-    alphabetically by ticker` where `ticker` is one of the file's `known` columns): (columns, directions), ascending
-    where unsaid (descending where the words before "by" say so); None where a key is neither a backticked name nor a
-    known column."""
-    for found in SORT_BY.finditer(text):
-        if found.group("col") or found.group("col2"):
-            way = (found.group("dir") or found.group("dir2")).lower()
-            return (found.group("col") or found.group("col2"),), ("descending" if way.startswith("desc") else
-                                                                  "ascending",)
-        keys = found.group("keys") or found.group("inner") or ""
-        parts = [part for part in SORT_SPLIT.split(keys.strip()) if part.strip()]
-        read = [SORT_KEY.match(part) for part in parts]
-        if not parts or not all(read) or any(each.group("bare") and each.group("bare") not in known for each in read):
-            continue
-        first = "descending" if "descending" in (found.group("way") or "").lower() else "ascending"
-        return (tuple(each.group("col") or each.group("bare") for each in read),
-                tuple(("descending" if each.group("dir").lower().startswith("desc") else "ascending")
-                      if each.group("dir") else first for each in read))
-    return None
-
-
-def na_word(text: str) -> str | None:
-    """The one word a sentence asks for a missing value: "" (empty), "NaN" or "null"; None where it asks none or more
-    than one (`blank or null`)."""
-    words = [word for word, pattern in (("", EMPTY_WORD), ("NaN", NAN_WORD), ("null", NULL_WORD))
-             if pattern.search(text)]
-    if len(words) != 1 or re.search(r"\b(?:blank|empty)\s+or\s+(?:null|NaN)\b|\b(?:null|NaN)\s+or\s+(?:blank|empty|"
-                                    r"null|NaN)\b", text, re.I):
-        return None
-    return words[0]
-
-
-def subjects(piece: Piece) -> list[str]:
-    """The names a piece is about: its head's (a bullet's `name:`), else its backticked names that are no type or
-    literal word."""
-    bullet = BULLET.match(piece.text)
-    head, _ = heads(bullet.group(2) if bullet else piece.text)
-    if head:
-        return list(head)
-    return [name for name in (m.group(1) for m in TICKED.finditer(piece.text))
-            if name.lower() not in TYPES and not files_in(name, ())]
-
-
-def label_terms(pieces: list[Piece], k: int, file: str) -> list[Term]:
-    """A piece's stated value sets ("x is one of a, b", "the only valid x labels are:" and the items after it, "- x:
-    one of ...", "x is A or B", each name and value in backticks): a `labels` term for x, and where the text adds "in
-    this order" a `rows` term for the values listed. None where a value reads as a number or the subject is one of
-    them."""
-    piece = pieces[k]
-    found = []
-    bullet = BULLET.match(piece.text)
-    head, body = heads(bullet.group(2) if bullet else piece.text)
-    for sentence in sentences(body if head else piece.text):
-        values: list[str] = []
-        subject = ""
-        pair = LABEL_PAIR.search(sentence)
-        match = LABEL_SET.search(sentence)
-        if pair:
-            subject, values = pair.group("subject"), [pair.group("a"), pair.group("b")]
-        elif match:
-            before = TICKED.findall(sentence[:match.start()])
-            subject = before[-1] if before else head[0] if len(head) == 1 else ""
-            values = [m.group(1).strip('"') for m in re.finditer(r"`([^`\n]{1,80})`", sentence[match.end():])]
-            if not values and sentence.rstrip().endswith(":"):
-                for each in pieces[k + 1:]:
-                    item = LIST_ITEM.match(each.text) if each.kind == "item" else None
-                    if not item or each.text[item.end():].strip(" .;,"):
-                        break
-                    values.append(item.group("name").strip('"'))
-        values = list(dict.fromkeys(values))
-        if not subject or len(values) < 2 or subject in values or any(number(value) is not None for value in values):
-            continue
-        said = quoted(normal(sentence), len(normal(sentence)))
-        found.append(Term("labels", file, (subject,), value=tuple(values), said=said))
-        if IN_ORDER.search(sentence[match.end() if match else 0:]) and format_of(file) in TABLE_FORMATS:
-            found.append(Term("rows", file, tuple(values), value="listed", said=said))
-    return found
-
-
-def terms(instruction: str, named: tuple[str, ...] = (), stated_: Stated | None = None) -> Terms:
-    """The output contract the instruction states (lane contract1; `Term`, above), from its text alone and only where
-    the text states it: key and column lists with the words that make them exact or ordered; each JSON template's
-    native types and nested paths; the word for a missing cell; a table's sort or its listed rows; the roundings
-    today's parse reads (`decimals`); and the kinds the text waives. Rule 8: patterns over the text's own words, no
-    unit's vocabulary."""
-    named = tuple(named)
-    stated_ = stated_ if stated_ is not None else stated(instruction, named)
-    today: dict[str, set] = {}
-    for file, names in (*stated_.keys.items(), *stated_.columns.items()):
-        today.setdefault(file, set()).update(names)
-    for prop in stated_.props:      # lane rules1's inline header, said where today's parse reads it (`rules`)
-        if prop.kind == "header" and prop.file:
-            today.setdefault(prop.file, set()).update(prop.names)
-    found = Terms(files={file: format_of(file) for file in named},
-                  today={file: frozenset(names) for file, names in today.items()})
-    pieces = layout(instruction, named)
-    last_code: dict[str, Piece] = {}
-    waived: set[str] = set()
-    out: list[Term] = []
-    for k, piece in enumerate(pieces):
-        file, kind = piece.file, format_of(piece.file)
-        if piece.kind == "code":
-            if kind == "json":
-                node = template(piece.text)
-                if node is not None:
-                    out += template_terms(node, file, quoted(piece.text.replace("\n", " "), len(piece.text)))
-            if file:
-                last_code[file] = piece
-            continue
-        if piece.kind not in ("text", "item", "heading"):
-            continue
-        for sentence in sentences(piece.text):
-            if WAIVER.search(sentence):
-                waived |= {name for name, pattern in WAIVED if pattern.search(sentence)}
-        if piece.kind == "heading":
-            continue
-        text = normal(piece.text)
-        exact, ordered = EXACT_SET.search(piece.text), ORDER_SET.search(piece.text)
-        if (exact or ordered) and LIST_WHAT.search(piece.text) and kind in ("json", *TABLE_FORMATS):
-            end = max(match.end() for match in (exact, ordered) if match)
-            names, node = lead_list(pieces, k, end, file, last_code)
-            path: tuple[str, ...] = ()
-            owner_ = re.match(r"^\s*(?:[-*+]\s+)?`([^`]+)`\s+(?:must|should|is|has)\b", piece.text)
-            if owner_ and kind == "json" and key_name(owner_.group(1)):
-                path = (owner_.group(1),)
-            elif node is not None and node[0] == "list":
-                path = ("[]",)
-            if len(names) >= 2 and len(set(names)) == len(names):
-                out.append(Term("keys" if kind == "json" else "columns", file, tuple(names), path,
-                                exact=bool(exact), ordered=bool(ordered), said=quoted(text, len(text))))
-        if kind in TABLE_FORMATS:
-            sort = sort_keys(piece.text, stated_.columns.get(file, ()))
-            if sort is not None:
-                out.append(Term("rows", file, sort[0], value=sort[1], said=quoted(text, len(text))))
-            if LISTED_ROWS.search(piece.text):
-                values = []
-                for each in pieces[k + 1:]:
-                    if each.kind != "item":
-                        break
-                    item = LIST_ITEM.match(each.text)
-                    if not item or each.text[item.end():].strip(" .;,"):
-                        values = []
-                        break
-                    values.append(item.group("name"))
-                if len(values) >= 2:
-                    out.append(Term("rows", file, tuple(values), value="listed", said=quoted(text, len(text))))
-            for sentence in sentences(piece.text):
-                words = BOOLEAN_WORDS.findall(sentence)
-                pair = tuple(dict.fromkeys(words))
-                first = BOOLEAN_WORDS.search(sentence)
-                before = [name for name in TICKED.findall(sentence[:first.start()]) if name not in pair] if first else []
-                if len(pair) == 2 and before:
-                    out.append(Term("labels", file, (before[-1],), value=pair,
-                                    said=quoted(normal(sentence), len(normal(sentence)))))
-        if kind in ("json", *TABLE_FORMATS):
-            for term in label_terms(pieces, k, file):
-                out.append(term)
-        for sentence in sentences(piece.text):
-            rounding = re.sub(r"\b(\d+)\s+dp\b", r"\1 decimal places", sentence, flags=re.I)
-            rounding = re.sub(r"\bto the nearest basis point\b", "to 4 decimal places", rounding, flags=re.I)
-            if rounding != sentence:
-                for prop in decimals(rounding, file, tuple(subjects(piece))):
-                    if not prop.phrase and prop.value is not None:
-                        out.append(Term("decimals", file, prop.names, value=int(prop.value), strict=prop.strict,
-                                        scope=prop.scope, said=sentence))
-            word = na_word(normal(sentence))
-            if word is None or word == "null" and kind != "json" or word != "null" and kind not in TABLE_FORMATS:
-                continue
-            names = () if word == "null" else tuple(name for name in subjects(Piece(piece.kind, sentence, file))
-                                                    if COLUMN_NAME.match(name))
-            if word == "null" or names:
-                out.append(Term("na", file, names, value=word, said=quoted(normal(sentence), len(normal(sentence)))))
-    for prop in stated_.props:
-        if prop.kind == "decimals" and not prop.phrase and prop.value is not None:
-            out.append(Term("decimals", prop.file, prop.names, value=int(prop.value), strict=prop.strict,
-                            scope=prop.scope, said=prop.said))
-    found.terms = list(dict.fromkeys(out))
-    found.waived = frozenset(waived)
-    return found

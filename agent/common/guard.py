@@ -1,19 +1,26 @@
-"""The guard: what the agent leaves in `--out` is the script's deliverables and nothing the scorer refuses, and the
+"""Makes sure the process exits 0 on time and leaves an output directory the scorer accepts.
+
+Step: 5, the close, and the watchdog that runs beside every other step.
+Called by: agent/n11/solve.py (`solve` arms the `Watchdog`, calls `close` and logs through `Steps`); the lock
+    `WRITING` is held by anything that writes to the output.
+Start at: `close` and `Watchdog`.
+
+The rules in detail
+-------------------
+The guard: what the agent leaves in `--out` is the script's deliverables and nothing the scorer refuses, and the
 process ends with status 0 on time whatever stalls.
 
 `close` is the last thing written to the output: it removes every regular file whose bytes hold one of the unit's
-canaries (canary.collect; g2's `CONTAMINATION_CANARY`, docs/challenge.md "The canary"), `reward.json` and
-`pytest_report.json` (g1 and g3 read them), and every entry the organisers' output checker refuses (the kit's
-README.md, "Output folder rules": links and special files, set-id and sticky bits, names, collisions, depth, count,
-sizes, sparse files), so a refused tree never costs a unit a script's work did not. It never writes a file. Every
-close holds `WRITING`, which the `Watchdog` takes before the process ends, so no exit cuts a close in half.
+canaries (canary.collect), `reward.json` and `pytest_report.json` (the scorer's own files), and every entry the
+organisers' output checker refuses (links and special files, set-id and sticky bits, names, case collisions, depth,
+count, sizes, sparse files), so a refused tree never costs a unit the work its script did. It never writes a file.
+Every close holds `WRITING`, which the `Watchdog` takes before the process ends, so no exit cuts a close in half.
 
 The `Watchdog` ends the process with status 0 `WATCHDOG_S` before the unit's deadline: it kills the running script,
-takes the lock, closes the output and exits, whatever the main thread is waiting on; a watchdog given `moved` (the
-seconds the deadline has moved since it was armed: agent/n11's, the client's deadline under the desk's
-`AGENTHON_MODEL_RATE_UNTIMED`, lane clock1) waits that much longer. `Steps` is the stderr log, one
-line a step with the seconds and the House requests so far; it is handed no instruction text and no credential.
-Under the desk's trace (`common.trace`) each log line and each close is written there too.
+takes the lock, closes the output and exits, whatever the main thread is waiting on; given `moved` (how far the
+deadline has moved since it was armed, under `AGENTHON_MODEL_RATE_UNTIMED`) it waits that much longer. `Steps` is the
+stderr log, one line a step with the seconds and the requests so far; it is handed no instruction text and no
+credential.
 """
 from __future__ import annotations
 
@@ -29,7 +36,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import canary, trace
+from . import canary
 
 WRITING = threading.Lock()
 WATCHDOG_S = 10.0             # the watchdog fires this long before the deadline
@@ -157,49 +164,39 @@ def close(out: Path, canaries: Iterable[str] = ()) -> Closed:
         for path, _ in sorted(entries, key=lambda item: (item[1], item[0].as_posix()))[MAX_ENTRIES:][::-1]:
             remove(path, "an entry over the tree's count")
     done.files = sorted(path.name for path in out.iterdir() if path.is_file() and not path.is_symlink())
-    trace.close(done.removed, done.files)
     return done
 
 
 class Steps:
-    """stderr, one line a step: the agent, the seconds since its start, the House requests so far, the step."""
+    """stderr, one line a step: the agent, the seconds since its start, the requests so far, the step."""
 
-    def __init__(self, agent: str, requests: Callable[[], int] = lambda: 0, stream=None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
-        self.agent, self.requests, self.stream, self.clock = agent, requests, stream, clock
-        self.started = clock()
-        self.lines: list[str] = []
+    def __init__(self, agent: str, requests: Callable[[], int] = lambda: 0) -> None:
+        self.agent, self.requests = agent, requests
+        self.started = time.monotonic()
 
     def __call__(self, step: str, detail: str = "") -> None:
-        line = f"{self.agent} {self.clock() - self.started:7.1f}s req={self.requests()} {step}" + \
+        line = f"{self.agent} {time.monotonic() - self.started:7.1f}s req={self.requests()} {step}" + \
             (f": {detail}" if detail else "")
-        self.lines.append(line)
-        trace.event("log", name=step, detail=detail)
         try:
-            print(line, file=self.stream or sys.stderr, flush=True)
+            print(line, file=sys.stderr, flush=True)
         except (OSError, ValueError):       # a stderr nobody reads (EPIPE) or closed costs the line, not the run
             pass
 
 
 class Watchdog:
-    """At `deadline - reserve`: `stop()` (the running script killed), `WRITING` taken, `finish()` (the close), then
-    `exit(0)`. Not armed where the deadline leaves no room. `moved`, where given, says how far the deadline has moved
-    since (seconds, never less than 0), and the watch waits on to the moved time; None, the time is fixed."""
+    """At `deadline - WATCHDOG_S`: `stop()` (the running script killed), `WRITING` taken, `finish()` (the close), then
+    `os._exit(0)`. Not armed where the deadline leaves no room. `moved` says how far the deadline has moved since (seconds,
+    never less than 0), and the watch waits on to the moved time."""
 
     def __init__(self, deadline: float, stop: Callable[[], None], finish: Callable[[], None],
-                 log: Callable[[str, str], None], *, reserve: float = WATCHDOG_S,
-                 exit: Callable[[int], None] = os._exit, moved: Callable[[], float] | None = None) -> None:
-        self.at = deadline - reserve
-        self.stop, self.finish, self.log, self.exit = stop, finish, log, exit
-        self.moved = moved
+                 log: Callable[[str, str], None], *, moved: Callable[[], float]) -> None:
+        self.at = deadline - WATCHDOG_S
+        self.stop, self.finish, self.log, self.moved = stop, finish, log, moved
         self.cancelled = threading.Event()
-        self.fired = threading.Event()
-        self.thread: threading.Thread | None = None
 
     def arm(self) -> Watchdog:
         if self.at > time.time():
-            self.thread = threading.Thread(target=self._watch, name="watchdog", daemon=True)
-            self.thread.start()
+            threading.Thread(target=self._watch, name="watchdog", daemon=True).start()
         return self
 
     def cancel(self) -> None:
@@ -208,10 +205,9 @@ class Watchdog:
     def _watch(self) -> None:
         if self.cancelled.wait(max(0.0, self.at - time.time())):
             return
-        while self.moved is not None and time.time() < self.at + max(0.0, self.moved()):
+        while time.time() < self.at + max(0.0, self.moved()):
             if self.cancelled.wait(max(0.0, self.at + max(0.0, self.moved()) - time.time())):
                 return
-        self.fired.set()
         try:
             self.stop()
         except Exception:  # noqa: BLE001 - nothing stops the exit
@@ -222,6 +218,4 @@ class Watchdog:
             self.finish()
         except Exception:  # noqa: BLE001
             pass
-        self.exit(0)
-        if held:                # reached only where `exit` returns (a test's)
-            WRITING.release()
+        os._exit(0)

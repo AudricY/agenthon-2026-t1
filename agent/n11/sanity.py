@@ -1,11 +1,18 @@
-"""The output digest and the sanity checks (lane n11d): what a run that exits 0 left in the output directory, read
-back for the House, and the findings that need nothing from the unit.
+"""Summarises the output files for the model (the output digest) and flags values no task allows, such as a negative
+probability or an expected shortfall below its VaR.
 
-E039's anatomy (docs/research/e039-anatomy.md): in 19 of its 58 dev units the agent wrote outputs that contradict the
-instruction or plain arithmetic (a negative Hill index, a negative gamma, ES below VaR, a negative probability) and the
-unit ended on the first clean run, because the loop's checks tested structure, never values.
+Step: 4, the loop's feedback after a run that exits 0.
+Called by: agent/n11/commands.py (`Workspace.sanity`).
+Start at: `read`, which returns the digest and the findings in one pass.
 
-- `read(out, named)` reads each output file once and returns both:
+The rules in detail
+-------------------
+The output digest and the sanity checks: what a run that exits 0 left in the output directory, read back for the
+model, and the findings that need nothing from the task. Outputs that contradict the instruction or plain arithmetic
+(a negative Hill index, a negative gamma, ES below VaR, a negative probability) pass every structural check, so the
+values are read too.
+
+- `read(out, named, rules=...)` reads each output file once and returns both:
   - **the digest**: per output file (the named ones first, then by path), its name and size; a CSV's or TSV's rows and
     columns, each numeric column's min and max and its NaN, zero and negative counts, a header-only flag and its text
     columns named; a JSON's scalars at the top level and one level down (`parent.key`), at most `JSON_SCALARS`, the
@@ -23,20 +30,18 @@ unit ended on the first clean run, because the loop's checks tested structure, n
   plural (`prices`, `probabilities`). A name holding an `EXEMPT` word (a change, a difference, a return, an error, a
   log, a contribution, a weight, a ratio, a percentage, a statistic, a count) is never read for its sign or range or
   paired; a column holding an `ECHO` word (an input echoed: a window, a confidence level, a strike) is never read for
-  constancy. What a value is near (a search bound the instruction names) is never a check: it would need the unit.
+  constancy. What a value is near (a search bound the instruction names) is never a check: it would need the task.
 
-Lane rules1 (`AGENTHON_N11_RULES=on`; docs/research/wrong-1013.md, section 5): `ruled(out, named)` reads the same
-files once more for the three rules that need the output alone, each finding a broken rule with the name and the value,
-never a question or a count: `vol_scale` (a value far past any market's, `VOL_MAX`, under a name holding a `VOL_WORDS`
-word and no `EXEMPT` one: a percent or an amount where a volatility is a decimal a year), `siblings` (a JSON object's
-numeric keys, `SIBLINGS` or more, all at one value that is neither zero nor whole, where neither the object's name nor
-every key's holds an `EXEMPT` word: a scalar written where each key holds its own) and `pct_level` (a name whose level
-suffix holds a percent word, `es_1pct`, read with the percent word as the level's (`levelled`): ES below VaR at one
-level, and the sign and range rules, which `EXEMPT`'s `pct` keeps from such a name today). Its thresholds live here and
-are never said.
+The rules (`Ruled`, read in the same pass): three rules that need the output alone, each finding a broken rule with the
+name and the value, never a question or a count: `vol_scale` (a value far past any market's, `VOL_MAX`, under a name
+holding a `VOL_WORDS` word and no `EXEMPT` one: a percent or an amount where a volatility is a decimal a year),
+`siblings` (a JSON object's numeric keys, `SIBLINGS` or more, all at one value that is neither zero nor whole, where
+neither the object's name nor every key's holds an `EXEMPT` word: a scalar written where each key holds its own) and
+`pct_level` (a name whose level suffix holds a percent word, `es_1pct`, read with the percent word as the level's
+(`levelled`): ES below VaR at one level, and the sign and range rules, which `EXEMPT`'s `pct` keeps from such a name
+otherwise). Their thresholds are never said.
 
-Pure: the standard library alone, nothing written, no unit or task named; every rule holds for any unit of its kind
-(rule 8). `scripts/n11_offline.py` measures the findings over N0's solved unit-runs (their false alarms).
+Pure: the standard library alone, nothing written, no task named; every rule holds for any task of its kind.
 """
 from __future__ import annotations
 
@@ -143,7 +148,7 @@ def risk_base(name: str) -> tuple[str, tuple[str, ...]] | None:
 
 
 def risk_of(found: tuple[str, ...]) -> tuple[str, tuple[str, ...]] | None:
-    """`risk_base` over a name's words as read (`words`, or lane rules1's `levelled`)."""
+    """`risk_base` over a name's words as read (`words`, or `levelled`)."""
     if holds(found, EXEMPT):
         return None
     for k, word in enumerate(found):
@@ -460,8 +465,9 @@ def json_line(doc: object) -> str:
     return ", ".join(parts[:JSON_SCALARS]) + (f", and {more} more" if more > 0 else "")
 
 
-def read(out: Path, named: tuple[str, ...] = (), *, rules: Ruled | None = None) -> tuple[str, list[str]]:
-    """The output directory's digest and the sanity findings over it (above); ("", []) where it holds no file."""
+def read(out: Path, named: tuple[str, ...] = (), *, rules: Ruled) -> tuple[str, list[str]]:
+    """The output directory's digest and the sanity findings over it (above), the rules' kept in `rules`; ("", [])
+    where it holds no file."""
     out = Path(out)
     try:
         files = sorted(path.relative_to(out).as_posix() for path in out.rglob("*")
@@ -469,14 +475,13 @@ def read(out: Path, named: tuple[str, ...] = (), *, rules: Ruled | None = None) 
     except OSError:
         files = []
     order = [name for name in named if name in files] + [name for name in files if name not in named]
-    found, lines, used, left = BesideRules(rules) if rules is not None else Findings(), [], 0, 0
+    found, lines, used, left = BesideRules(rules), [], 0, 0
     for number_, name in enumerate(order):
         path = out / name
         try:
             size = path.stat().st_size
             suffix = path.suffix.lower()
-            if rules is not None:
-                rules.json = suffix in JSONS
+            rules.json = suffix in JSONS
             if number_ >= MAX_FILES or size > MAX_BYTES or size == 0:
                 said = "empty" if size == 0 else "not read"
             elif suffix in TABLES:
@@ -515,7 +520,7 @@ def clip(line: str, room: int) -> str:
     return data[:room - 4].decode("utf-8", errors="ignore") + " ..."
 
 
-# ------------------------------------------------------------------------------------- the rules (lane rules1)
+# ------------------------------------------------------------------------------------------------- the rules
 
 VOL_WORDS = frozenset({"vol", "volatility", "iv", "sigma"})     # `vol_scale`'s names
 VOL_MAX = 2.0               # a volatility past this (200% a year) is no market's: a percent or an amount; never said
@@ -523,7 +528,6 @@ SIBLINGS = 3                # `siblings`: a JSON object's numeric keys at one va
 LEVEL_WORDS = frozenset({"pct", "percent", "p"})    # `pct_level`: a percent word right after a level's digits
 
 
-@functools.lru_cache(maxsize=4096)
 @functools.lru_cache(maxsize=4096)
 def levelled(name: str) -> tuple[str, ...]:
     """A name's words with a percent word that follows a level's digits left out (`es_1pct` is `es 1`): the suffix read
@@ -555,9 +559,8 @@ def listed_names(names: list[str], most: int = 4) -> str:
 
 
 class Ruled(Findings):
-    """Lane rules1's pass over the files `read` reads (`ruled`): `frame` and `document` call it as they call
-    `Findings`, and it keeps the rules' findings alone, each with its rule and what it is known by across runs (its
-    rule, file and name: `rules`); today's lines are the plain read's, never this pass's."""
+    """The rules, fed each file's values as `read` reads them (`BesideRules`): their findings, each with its rule and
+    what it is known by across runs (its rule, file and name: `rules`)."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -570,12 +573,6 @@ class Ruled(Findings):
         if key not in self.lines and said_ < PER_RULE:
             self.lines[key] = line[:FINDING_CHARS]
             self.rules[key] = (rule, ident)
-
-    def add(self, key: tuple, line: str) -> None:
-        """Today's findings (a table's header and no row) are the plain read's."""
-
-    def constant(self, file: str, name: str, values: Column, table: bool) -> None:
-        """Today's constancy finding is the plain read's."""
 
     def bounds(self, file: str, name: str, values: Column, table: bool) -> None:
         """`vol_scale` over a name's values; `pct_level`'s sign and range under a suffixed name (`levelled`)."""
@@ -631,9 +628,8 @@ class Ruled(Findings):
                   + f" {listed_names(list(entries))} all hold {number(value)}, one figure where each key holds its own")
 
 
-
 class BesideRules(Findings):
-    """Share a file's parsed values between today's findings and the armed rules."""
+    """The plain findings, each file's parsed values handed to the rules (`Ruled`) too."""
 
     def __init__(self, rules: Ruled) -> None:
         super().__init__()
@@ -652,35 +648,6 @@ class BesideRules(Findings):
             self.rules.pairs(file, where, entries)
         except Exception:  # noqa: BLE001 - a rule reader never changes the ordinary observation
             pass
-
-
-def ruled(out: Path, named: tuple[str, ...] = ()) -> list[tuple[str, str, str]]:
-    """Lane rules1: the output-alone rules' findings over the output directory (`Ruled`), each (rule, what it is known
-    by, line), in `read`'s order of the files and within its bounds; a file that cannot be read holds none."""
-    out = Path(out)
-    try:
-        files = sorted(path.relative_to(out).as_posix() for path in out.rglob("*")
-                       if path.is_file() and not path.is_symlink())
-    except OSError:
-        files = []
-    found = Ruled()
-    for number_, name in enumerate([name for name in named if name in files] + [name for name in files
-                                                                                 if name not in named]):
-        path = out / name
-        try:
-            size, suffix = path.stat().st_size, path.suffix.lower()
-            if number_ >= MAX_FILES or size > MAX_BYTES or size == 0:
-                continue
-            found.json = suffix in JSONS
-            if suffix in TABLES:
-                table(path, name, TABLES[suffix], found)
-            elif suffix in PARQUETS:
-                parquet(path, name, found)
-            elif suffix in JSONS:
-                document(json.loads(path.read_bytes()), name, found)
-        except Exception:  # noqa: BLE001 - a file that cannot be read holds no finding, never raised into the run
-            continue
-    return [(*found.rules[key], line) for key, line in found.lines.items()]
 
 
 def said(findings: list[str]) -> str:

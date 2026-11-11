@@ -1,4 +1,12 @@
-"""The data digest: what the unit's data files hold, built by code and bounded in bytes.
+"""Describes the unit's input files for the first message: each file's size, and a sample suited to its format.
+
+Step: 1.
+Called by: agent/n11/solve.py (`digest` in `N11.solve`); agent/n11/commands.py reuses the per-format readers.
+Start at: `digest`.
+
+The rules in detail
+-------------------
+The data digest: what the unit's data files hold, built by code and bounded in bytes.
 
 Every file under the data directory with its size; then, file by file while the cap lasts, what its kind shows best:
 a CSV's or TSV's header, first and last rows and each column's type; a JSON file whole where it is small, else its
@@ -20,7 +28,7 @@ from pathlib import Path
 
 from . import canary
 
-DIGEST_BYTES = 24_000       # the whole digest; measured in runs/lanes/agent-report.md ("The digest's cap")
+DIGEST_BYTES = 24_000       # the whole digest
 MIN_SHARE = 1_200           # a file's section never shrinks below this while the cap lasts
 LISTED = 120                # files named in the listing; the rest are counted
 HEAD_ROWS = 5

@@ -1,13 +1,20 @@
-"""Canaries: the unit's own GUIDs, kept out of every prompt and every output byte.
+"""Finds the organisers' watermark GUIDs (canaries) in a unit, and keeps them out of every prompt and output file.
 
-g2 scans every output file, byte-wise and case-folded, for any GUID of the organisers' registry, not only the unit's
-(docs/challenge.md, "The canary"). The organisers watermark the data files too: ten public units carry a GUID inside
-a data file (a `params.json` field, a `template.py` header), and every one is a canary (runs/lanes/agent-addendum.md).
-So the canary set is every GUID-shaped token anywhere in the unit's input tree (`collect`: `instruction.md`,
-`card.toml` and every file under `environment/`, binary files as bytes). A line of the instruction carrying a
-GUID-shaped token never reaches the model (`strip`); a canary anywhere else in a prompt is replaced by `<canary>`
-(`redact`); and an output file holding one is removed (guard.close). A GUID-shaped token outside the set (a `uuid4`
-a script made, an id in a Final unit's data) is not contamination and is left alone.
+Step: 1 (collected with the unit) and 5 (the close removes any output file holding one).
+Called by: common/unit.py (`collect`, `strip`), every module that builds prompt text (`redact`), and
+    common/contract.py and common/guard.py (`file_holds`).
+Start at: `collect`, `strip` and `redact`.
+
+The rules in detail
+-------------------
+Canaries: the unit's own GUIDs, kept out of every prompt and every output byte.
+
+The scorer scans every output file, byte-wise and case-folded, for any GUID of the organisers' registry, and the
+organisers watermark some data files too (a `params.json` field, a `template.py` header). So the canary set is every
+GUID-shaped token anywhere in the unit's input tree (`collect`: `instruction.md`, `card.toml` and every file under
+`environment/`, binary files as bytes). A line of the instruction carrying a GUID-shaped token never reaches the model
+(`strip`); a canary anywhere else in a prompt is replaced by `<canary>` (`redact`); and an output file holding one is
+removed (guard.close). A GUID-shaped token outside the set (a `uuid4` a script made) is left alone.
 """
 from __future__ import annotations
 
@@ -31,13 +38,9 @@ def card_canary(card: dict) -> str | None:
     return value.strip().lower() if isinstance(value, str) and value.strip() else None
 
 
-def found(text: str) -> set[str]:
-    return {match.lower() for match in GUID.findall(text)}
-
-
 def guids(data: bytes) -> set[str]:
     """Every GUID-shaped token in the bytes, lower-cased: each middle found, then the whole token around it checked
-    (a scan of the 37 MB parquet three units ship takes 0.01 s so, 0.65 s by the case-blind pattern alone)."""
+    (much faster on a large binary file than the case-blind pattern alone)."""
     out = set()
     for match in MIDDLE.finditer(data):
         start = match.start() - 8
@@ -105,7 +108,7 @@ def redact(text: str, canaries: Iterable[str]) -> str:
 
 
 def holds(data: bytes, canaries: Iterable[str]) -> bool:
-    """A canary anywhere in the bytes, case-folded, as g2 scans them."""
+    """A canary anywhere in the bytes, case-folded, as the scorer scans them."""
     folded = data.lower()
     return any(canary.lower().encode() in folded for canary in canaries if canary)
 

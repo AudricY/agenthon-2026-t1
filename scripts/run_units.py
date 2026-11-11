@@ -5,7 +5,7 @@ the unit's own checker, as step 6 of the kit's README does.
                                 [--units NAME ...] [--jobs N] [--results DIR] [--base IMAGE]
 
 The model is reached through MODEL_ENDPOINT, MODEL_NAME and MODEL_TOKEN, the variables the platform injects (see
-REPRODUCE.md). The client settings in CLIENT_VARIABLES are forwarded too where they are set, for a hosted route that
+README.md). The client settings in CLIENT_VARIABLES are forwarded too where they are set, for a hosted route that
 differs from the platform's (OpenRouter's own field for thinking off, the platform's pace). Each container receives
 every variable by name, so the token never appears on a command line. Needs Docker and the organisers'
 qfbench2-common package, whose `split_unit` builds the tree the agent sees: the unit without its checks and reference
@@ -116,7 +116,7 @@ def main() -> int:
 
     missing = [name for name in MODEL_VARIABLES if not os.environ.get(name)]
     if missing:
-        sys.exit(f"set {', '.join(missing)} first (REPRODUCE.md, step 4)")
+        sys.exit(f"set {', '.join(missing)} first (README.md, 'Run the units')")
     units_dir = Path(args.kit) / "units"
     names = args.units or sorted(path.name for path in units_dir.iterdir() if (path / "card.toml").is_file())
     units = [units_dir / name for name in names]

@@ -1,12 +1,16 @@
-"""Whether a script uses the method library `qf` (agent/qf), read from its source alone: moved from
-scripts/run_sweep_read.py, which N9's read counts with, so N11's gate (agent/n11) and the read count one way.
+"""Tells whether a script imports the method library and which of its functions it calls.
+
+Called by: agent/n11/solve.py (`N11.used`, for the reminder to call a function the task names).
+Start at: `qf_use`.
+
+The rules in detail
+-------------------
+Whether a script uses the method library `qf` (agent/qf), read from its source alone.
 
 `qf_use(script)`: whether the script imports `qf` (`import qf`, `import qf.sub as x`, `from qf import f`, `from
 qf.sub import f`), and the `qf` functions it calls: an attribute call on a name the import bound (`qf.f(...)`,
 `x.f(...)`, `qf.sub.f(...)`), or a call of a name imported from it, under its own name. By the script's syntax tree; a
-script that does not parse (cut, or broken) by its lines (`fallback`, lane lib8): the names its import lines bind, as
-the tree's reading binds them, with a name `from qf import` binds a shelf's too (`from qf import rates`), then each
-call on them: `qf.f(`, `qf.sub.f(`, `x.f(` and a name's own `f(`. Standard library only.
+script that does not parse (cut, or broken) by its lines (`fallback`).
 """
 from __future__ import annotations
 

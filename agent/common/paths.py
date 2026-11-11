@@ -1,13 +1,19 @@
-"""The path map: where each path the instruction names is on this filesystem.
+"""Maps each path the instruction names to where that file really is on the platform.
 
-The instructions name the unit image's paths: `/app/data/<x>` on 40 units, a bare `/app/<file>` on 37, and the
-unit's `environment/Dockerfile` `COPY` lines say which data file each one is, under another name where the copy
-renames it (docs/challenge.md gives the public example; this file travels in the image, so it names no unit). On
-the platform none of those paths exists: the unit is at `--task-dir`, read-only, and the output is `--out`
-(docs/challenge.md, "Where the instructions say the data is"). So each named path is looked up by the `COPY` lines,
-then by name under the data directory, and stated to the model as "where the instruction says X, read Y"; a path
-with no file is said to have none, and a script the instruction asks to be saved at `/app/<name>.py` is answered by
-the runner, which saves the model's script under /tmp.
+Step: 1.
+Called by: agent/n11/solve.py (`build` in `N11.solve`), common/contract.py (`outputs`) and agent/n11/commands.py.
+Start at: `build`, and `PathMap.text` for what the model is told.
+
+The rules in detail
+-------------------
+The path map: where each path the instruction names is on this filesystem.
+
+The instructions name the unit image's paths (`/app/data/<x>`, a bare `/app/<file>`), and the unit's
+`environment/Dockerfile` `COPY` lines say which data file each one is, under another name where the copy renames it.
+On the platform none of those paths exists: the unit is at `--task-dir`, read-only, and the output is `--out`. So each
+named path is looked up by the `COPY` lines, then by name under the data directory, and stated to the model as "where
+the instruction says X, read Y"; a path with no file is said to have none, and a script the instruction asks to be
+saved at `/app/<name>.py` is answered by the runner, which saves the model's script under /tmp.
 """
 from __future__ import annotations
 
@@ -34,7 +40,6 @@ class Entry:
     named: str              # the path as the instruction names it, normalised
     kind: str               # "read", "output", "script" or "missing"
     path: Path | None       # the file or directory here; for "output", the file in --out
-    how: str = ""           # "copy", "name" or "input": how the file was found
 
     def line(self) -> str:
         if self.kind == "read":
@@ -165,20 +170,20 @@ def locate(path: str, task_dir: Path, placed: dict[str, Path], files: list[Path]
     rest = under(path, "/input")
     if rest is not None:
         here = task_dir / rest
-        return Entry(path, "read", here, "input") if here.exists() else Entry(path, "missing", None)
+        return Entry(path, "read", here) if here.exists() else Entry(path, "missing", None)
     if path in placed and placed[path].exists():
-        return Entry(path, "read", placed[path], "copy")
+        return Entry(path, "read", placed[path])
     for root in sorted((p for p in placed if placed[p].is_dir()), key=len, reverse=True):
         rest = under(path, root)
         if rest and (placed[root] / rest).exists():
-            return Entry(path, "read", placed[root] / rest, "copy")
+            return Entry(path, "read", placed[root] / rest)
     inside = [placed[p].parent for p in placed if under(p, path)]
     if inside and len(set(inside)) == 1:
-        return Entry(path, "read", inside[0], "copy")          # a directory its files were copied into one by one
+        return Entry(path, "read", inside[0])          # a directory its files were copied into one by one
     name = posixpath.basename(path)
     same = [file for file in files if file.name == name]
     if len(same) == 1:
-        return Entry(path, "read", same[0], "name")
+        return Entry(path, "read", same[0])
     if name.endswith(SCRIPTS):
         return Entry(path, "script", None)
     return Entry(path, "missing", None)

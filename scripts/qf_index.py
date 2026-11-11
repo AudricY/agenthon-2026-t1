@@ -21,10 +21,6 @@ sys.path.insert(0, str(ROOT / "agent"))
 from n11 import library, measure  # noqa: E402
 
 
-def build(package: Path) -> str:
-    return library.scan(package).index() + "\n"
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--qf", type=Path, default=ROOT / "agent" / library.PACKAGE)

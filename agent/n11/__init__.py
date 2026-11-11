@@ -1,1 +1,1 @@
-"""N11: the tool-call loop over the library (agent/n11/solve.py)."""
+"""The agent. `solve.py` drives one unit and the other modules are its steps; docs/architecture.md maps them."""

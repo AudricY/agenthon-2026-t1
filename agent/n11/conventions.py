@@ -1,32 +1,33 @@
-"""The conventions the instruction fixes, put to the model as questions, and two findings that read a run's output
-against the instruction (lane convcard1; the owner's in616 and in618, agenthon-t2). The loop's and the holdout's
-failure reads (docs/research/loop-wrong-outputs-1011.md, docs/research/holdout-failures-1012.md) traced most
-clean-but-wrong outputs to a convention or shape the instruction fixed in words the model read once and did not carry
-into its code: a scale, a window, a count, a row order, a parameter.
+"""Two more findings after a run that exits 0: an output table whose dates stop short of the input's, and output
+values in the wrong scale (a percent where the instruction says a decimal).
 
-- **The card** (`card`; agent/n11/solve.py's `CONVCARD` switch, `AGENTHON_N11_CONVENTIONS=on`): the instruction
-  matched against a fixed table of convention words and phrases (`TERMS`: scale, time, windows, returns, estimators,
-  rounding and ordering), each word found quoted as the instruction writes it and put as a question its code must
-  answer, never an answer; then each parameters file's keys (`parameters`), named as given (their values never
-  said). Within `CARD_TOKENS` of the model's tokens (`CARD_BYTES` where the tokenizer does not load), never said: the
-  lines past it are left out whole. "" where the instruction uses none and no parameters file is there.
+Step: 4, the loop's feedback. Neither finding blocks a finish.
+Called by: agent/n11/commands.py (`Workspace.against`).
+Calls: agent/n11/props.py for reading the instruction's sentences, agent/n11/commands.py for reading tables.
+Start at: `span` and `scale`.
+
+The rules in detail
+-------------------
+Two findings that read a run's output against the instruction. Many clean-but-wrong outputs come from a
+convention or shape the instruction fixed in words the model read once and did not carry into its code: a scale, a
+window, a count, a row order.
+
 - **The span finding** (`span`): an output table whose dates run as a series (`Series.regular`: one spacing, no wide
   gap), against the dates of the task's input tables (`Dated`): where it starts after the span the middle input
   table holds (`Dated.held`) by more than the longest window the instruction names (`windows`), two steps and a
   weekend, or ends before it by more than two steps and a weekend (and the longest horizon, a length beside a word
-  that looks ahead of a row: `LEAD`), the table still covering at least `COVERS` of that span (a few dates a condition picks
-  are no series cut short); or where, overlapping them, it runs past every date the input tables hold (in any
+  that looks ahead of a row: `LEAD`), the table still covering at least `COVERS` of that span (a few dates a condition
+  picks are no series cut short); or where, overlapping them, it runs past every date the input tables hold (in any
   column: `Dated.joint`) by more than a step. One line, its file named, no date said.
 - **The scale finding** (`scale`): an output name the instruction says is in percent, in basis points or a decimal
   (`bound_scales`: the scale word bound to the name nearest before it in its sentence, or the list it ends), whose
   values read in another scale: all under one in magnitude where percent or basis points are said, all at least one
   where a decimal is said. One line naming the names, never a value.
 Both findings are said after a run that exits 0 (agent/n11/commands.py `Workspace.against`), beside the instruction's
-and the contract's findings and apart from them: neither blocks a finish nor makes a run unclean.
+findings and apart from them: neither blocks a finish nor makes a run unclean.
 
-Pure: the standard library alone (pyarrow where a parquet file is read), nothing written, nothing named of any unit
-(rule 8). It imports agent/n11/commands.py (and state.py and inputs.py, which import it too): commands.py imports
-this module inside the method that uses it.
+Pure: the standard library alone (pyarrow where a parquet file is read), nothing written, nothing named of any task.
+It imports agent/n11/commands.py, so commands.py imports this module inside the method that uses it.
 """
 from __future__ import annotations
 
@@ -35,18 +36,13 @@ import io
 import itertools
 import re
 import statistics
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from n11 import commands, inputs, measure, props, state
+from n11 import commands, props
 
-CARD_TOKENS = 600           # the card's section, at most, in the model's tokens: the harness's, never said
-CARD_BYTES = 2_400          # and in bytes where the tokenizer does not load (the program's 4 bytes a token)
-CARD_HEAD = "# The task's conventions, as questions"
-CARD_LEAD = ("Each line quotes the task's own words and asks what they fix. Settle each from the task's text before "
-             "computing, and write the code to that answer:")
-VALUE_KEY = re.compile(r"[-+]?\d[\d_.,eE%+-]*")           # a key that is a number: a value, never named
 MAX_ROWS = 200_000          # a table's rows read for its dates
 SNIFF_ROWS = 20             # a column's first cells read to tell a date column
 DATED_SHARE = 0.9           # the share of those cells that must read as dates
@@ -58,180 +54,125 @@ PARQUETS = (".parquet", ".pqt")
 DATE_NAME = re.compile(r"date|time|month|period|day|week|year|asof|as_of|stamp|^dt$", re.I)
 YEAR_MONTH = re.compile(r"(\d{4})[-/](\d{1,2})")
 COMPACT_DAY = re.compile(r"(19|20)\d{6}")                # 20200131, read where the column's name says a date
-SAID_NAMES = 3              # the names the scale finding says, at most: the harness's bound, never said
-
-
-# ------------------------------------------------------------------------------------------------ the card
-
-
-@dataclass(frozen=True)
-class Term:
-    kind: str                   # scale, time, window, returns, estimator, order
-    pattern: re.Pattern
-    question: str               # asked of the words as the instruction writes them (`{said}`)
-
-
-def term(kind: str, pattern: str, question: str) -> Term:
-    return Term(kind, re.compile(pattern, re.I), question)
-
-
-TERMS = (   # the table, in the card's order: each a question, never an answer (no row names a unit's words)
-    term("scale", r"\bper ?cent(?:age)?s?\b|\bpercentage points?\b|\(\s*%\s*\)|\bin %",
-         "which outputs are in percent, and which inputs?"),
-    term("scale", r"\bbasis[- ]points?\b|\bbps\b|\bbp\b",
-         "which values are in basis points, and where does the code convert them on the way in and out?"),
-    term("scale", r"(?<!\d )\bdecimals?\b(?!\s+places?)|\braw floats?\b|\bas (?:a )?fractions?\b",
-         "which values are decimals, and which inputs arrive in another scale?"),
-    term("scale", r"\bper unit\b|\bper 1(?:\.0)? ?%|\bper (?:one |1 )?(?:vol(?:atility)? point|percentage point|"
-                  r"basis point|bp)\b|\bpartial derivatives?\b|(?<!days )(?<!steps )(?<!times )(?<!bars )(?<!payments )"
-                  r"\bper[- ](?:year|day|trading day|calendar day)\b",
-         "is each output the plain quantity, or scaled per unit, per point, per percent, per day or per year?"),
-    term("time", r"\bannuali[sz](?:e|ed|es|ing|ation)\b|\bper annum\b",
-         "which quantities are annualised, and with how many periods a year?"),
-    term("time", r"\btrading[- ]days?\b",
-         "which windows, counts and annualisations run in trading days, and where does a calendar day count instead?"),
-    term("time", r"\bcalendar[- ]days?\b",
-         "which spans run in calendar days, and where do trading days count instead?"),
-    term("time", r"\bbusiness[- ]days?\b",
-         "which dates must fall on business days, and how is a date that is not one moved?"),
-    term("time", r"\b(?:act|actual|a)/(?:360|365(?:f|l)?|act|actual)\b|\b30(?:e|u)?/360\b|\bday[- ]count\w*",
-         "which year fractions use it, and between which dates?"),
-    term("time", r"\byear[- ]fractions?\b|\bin years\b|\btime to (?:expiry|maturity)\b",
-         "which inputs take times in years, and computed from which dates under which day count?"),
-    term("time", r"\bmonth[- ]ends?\b|\bmonthly\b",
-         "which series are monthly, and is a month's value its last day's or its first's?"),
-    term("time", r"\bcontinuously[- ]compounded\b|\bcompound(?:ed|ing)?\b(?!\s+(?:poisson|options?)\b)|\bsimple (?:interest|rates?|division)\b",
-         "which rates are compounded, how often, and which are simple?"),
-    term("window", r"\bwindows?\b",
-         "how long is each window, which rows does it hold, and is its first full window the first row kept?"),
-    term("window", r"\brolling\b",
-         "which quantities roll, over which rows, and what stands before the first full window?"),
-    term("window", r"\btrailing\b(?!\s+(?:`?z\b|spaces?|whitespace|comments?|commas?|zeros?|newlines?|stop))",
-         "does each trailing window end on the current row or on the one before it?"),
-    term("window", r"\blook-?backs?\b(?!\s+options?\b)",
-         "how far back does each lookback reach, and does it hold the current row?"),
-    term("window", r"\bexpanding\b",
-         "from which row does each expanding window start?"),
-    term("window", r"\binclusive(?:ly)?\b|\bexclusive\b|\bhalf-open\b",
-         "which ends of each range are held, and does the code's slicing hold the same ones?"),
-    term("window", r"\bformation\b|\bskip(?:s|ping|ped)? the (?:most recent|last|latest|first)\b|\bholding period\b",
-         "which rows form each signal, which are skipped, and in which period does it trade?"),
-    term("window", r"\blag(?:s|ged)?\b|\bt ?- ?1\b|\bt ?\+ ?1\b|\bprevious (?:day|bar|row|period|month|close)\b|"
-                   r"\b(?:next|following) (?:day|bar|row|period|month|open|session)\b|"
-                   r"(?<!parallel )(?<!rate )(?<!drift )(?<!curve )\bshift(?:s|ed)?\b",
-         "which values are lagged, by how far, and does a signal act on its own row or a later one?"),
-    term("window", r"\bwarm-?up\b|\bburn-?in\b|\bmin_periods\b|\bfirst full\b|\bfirst valid\b",
-         "which first rows lack a full history, and does the task keep, fill or drop them?"),
-    term("window", r"\bvalid (?:observations?|rows?|returns?|months?|days?|data points?)\b|"
-                   r"\bnumber of observations\b|\bnon-?missing\b",
-         "which count does each output report: the rows left after dropping the missing, or a window's length?"),
-    term("returns", r"\blog(?:arithmic)?[- ]returns?\b|\blog[- ](?:price )?(?:changes?|differences?)\b",
-         "which returns are log returns, and which simple?"),
-    term("returns", r"\bsimple returns?\b|\barithmetic returns?\b|\bpct_change\b|\bpercentage changes?\b",
-         "which returns are simple, and which log?"),
-    term("returns", r"\bexcess (?:returns?|of)\b",
-         "which returns are in excess of which rate, taken at which period?"),
-    term("returns", r"\btotal returns?\b|\badj(?:usted)?[ _]?close\b|\bdividends? reinvested\b",
-         "which prices hold dividends and splits, and which returns are total?"),
-    term("returns", r"\bcumulative (?:returns?|wealth|pnl|p&l)\b|\bcumprod\b|\bcompounded returns?\b",
-         "is each cumulative series compounded or summed, and from which starting value?"),
-    term("returns", r"(?<!stop-)(?<!stop )\blosse?s?\b|\bsigned\b|\b(?:as|is) (?:a )?positive (?:number|value|loss|magnitude)\b",
-         "which values are losses and which returns, and which sign does each function the code calls take?"),
-    term("estimator", r"\bsample (?:standard deviation|std|variance|covariance|mean|statistics|estimates?)\b|"
-                      r"\bpopulation (?:standard deviation|std|variance|covariance)\b|\b(?:un)?biased\b",
-         "which estimators are the sample's and which the population's, and with which ddof?"),
-    term("estimator", r"\bddof\b|\bbessel\b|\b(?:by|over) \(?n ?- ?1\b",
-         "which estimators divide by n and which by n - 1?"),
-    term("estimator", r"\bewma\b|\bexponentially[- ]weighted\b|\briskmetrics\b|\bema\b|\bewm\b|\bhalf-?life\b|"
-                      r"\bdecay (?:factor|rate)\b",
-         "what seeds the recursion, what is its decay, and is it adjusted?"),
-    term("estimator", r"\bseed(?:s|ed)?\b|\binitiali[sz](?:e|ed|es|ation)\b|\binitial (?:value|variance|guess)\b",
-         "which random draws or recursions take a seed or a start, and from where?"),
-    term("order", r"\bround(?:ed|ing)?\b|\bdecimal places?\b|\bsignificant (?:figures|digits)\b",
-         "which outputs are rounded, at which step, and to which precision?"),
-    term("order", r"\bsort(?:ed|ing)?\b|\bordered by\b|\bchronological(?:ly)?\b",
-         "which outputs are sorted, by which key, and before which step?"),
-    term("order", r"\bascending\b|\bdescending\b|\bmost[- ]recent[- ]first\b|\b(?:oldest|earliest|newest|latest)"
-                  r"[- ]first\b|\breverse[- ]chronological\b",
-         "in which direction does each input arrive, and in which must each output run?"),
-    term("order", r"\blatest\b|\bmost recent\b|\bearliest\b|\blast (?:available|observation|date|row|value)\b",
-         "latest or earliest by which date, in a frame sorted which way?"),
-    term("order", r"\b(?:date|day|month)s? (?:of|with|at) (?:the )?(?:largest|widest|highest|lowest|maximum|"
-                  r"minimum|smallest|narrowest|biggest|peak|max|min)\b|\bwidest\b|\bnarrowest\b",
-         "over which rows is the extreme taken, and which date wins a tie?"),
-    term("order", r"\bties?\b|\btie-?break\w*",
-         "how is each tie broken, and does the code's sort keep that order?"),
-)
-KINDS = ("scale", "time", "window", "returns", "estimator", "order")
-
-
-@dataclass(frozen=True)
-class Card:
-    """The card's section (`text`, "" where nothing fires), the words of each line kept (a parameters line: its
-    file), and the lines the bound left out."""
-    text: str = ""
-    terms: tuple[str, ...] = ()
-    left: int = 0
-
-
-def lines_of(instruction: str, given: list[tuple[str, list[str]]]) -> list[tuple[str, str]]:
-    """The card's lines in `TERMS`' order and then the parameters', each (its words, its line): a row's first match
-    in the instruction's prose (a whole word, never inside a name such as `annualized_return`), quoted as written,
-    its spaces and line breaks as one space; a parameters file's keys named."""
-    text = " ".join(instruction.split())        # a phrase broken across lines reads as one
-    found: list[tuple[str, str]] = []
-    for row in TERMS:
-        match = row.pattern.search(text)
-        if match:
-            said = match.group(0)
-            found.append((said, f"- the task says '{said}': {row.question}"))
-    for name, keys in given:
-        named = listed([f"`{key}`" for key in keys])
-        found.append((name, f"- the parameter{'s' if len(keys) > 1 else ''} {named} "
-                            f"{'are' if len(keys) > 1 else 'is'} given in {name}: use "
-                            f"{'each' if len(keys) > 1 else 'it'}, do not assume it."))
-    return found
-
-
-def card(instruction: str, given: list[tuple[str, list[str]]] = (), bound: int | None = None) -> Card:
-    """The card for `instruction` and the parameters files `given` (`parameters`), within `bound` (`CARD_TOKENS` in
-    the process's unit, measure.bound): its head, its lead and the lines that fit whole, in order."""
-    found = lines_of(instruction, list(given))
-    if not found:
-        return Card()
-    bound = measure.bound(CARD_TOKENS, CARD_BYTES) if bound is None else bound
-    kept: list[tuple[str, str]] = []
-    text = ""
-    for said, line in found:
-        trial = "\n".join([CARD_HEAD, "", CARD_LEAD, *[each for _, each in kept], line])
-        if measure.size(trial) <= bound:
-            kept.append((said, line))
-            text = trial
-    return Card(text, tuple(said for said, _ in kept), len(found) - len(kept)) if kept else Card(left=len(found))
-
-
-def listed(names: list[str]) -> str:
-    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
-
-
-def parameters(data_dir: Path) -> list[tuple[str, list[str]]]:
-    """Each parameters file among the inputs and its top-level keys, as lane tools1's reader names them
-    (commands.parameter_files: a key opening with `_` or holding prose left out), less a key that reads as a number
-    or a date (a value, not a name: `VALUE_KEY`, `moment`); [] where none reads."""
-    found = []
-    for name, keys in commands.parameter_files(Path(data_dir)):
-        kept = [key for key in keys if not VALUE_KEY.fullmatch(key) and moment(key) is None]
-        if kept:
-            found.append((name, kept))
-    return found
+SAID_NAMES = 3              # the names the scale finding says, at most; never said
+REGULAR = 0.8               # the share of steps its spacing's class must hold, else the spacing is irregular
+IRREGULAR_DATES = 6         # a series' steps said irregular only over at least this many dates
+DAY = 86_400                # seconds
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+# (label, the steps in days it holds, the least and the most: a calendar's, give or take a business day's roll)
+CLASSES = (("weekly", 6, 8), ("monthly", 27, 34), ("quarterly", 85, 96), ("half-yearly", 175, 190),
+           ("yearly", 358, 372))
+MONTH_FORMS = ("%d-%b-%Y", "%d %b %Y", "%b %d, %Y", "%d-%b-%y", "%d.%m.%Y")   # dates beside ISO's and slashed ones
 
 
 # ----------------------------------------------------------------------------------------------- the dates
 
 
+def slashed(cell: str) -> tuple[int, int, int] | None:
+    """A slashed date's fields (first, second, year), a two-digit year read in the 2000s; None where it is none."""
+    parts = cell.split("/")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        return None
+    first, second, year = (int(part) for part in parts)
+    return first, second, year + (2000 if year < 100 else 0)
+
+
+def when(cell: str) -> tuple | None:
+    """A date cell's place on the calendar, comparable with another's: an ISO date or time, a slashed date (day
+    first where its first field passes 12, else month first), or one with its month named (`MONTH_FORMS`); None
+    where it reads as none, a bare number among them."""
+    if commands.number(cell) is not None:
+        return None
+    try:
+        return tuple(datetime.fromisoformat(cell.replace("Z", "+00:00")).timetuple()[:6])
+    except ValueError:
+        pass
+    fields = slashed(cell)
+    if fields is not None:
+        first, second, year = fields
+        return (year, second, first) if first > 12 else (year, first, second)
+    for form in MONTH_FORMS:
+        try:
+            moment = datetime.strptime(cell, form)
+        except ValueError:
+            continue
+        return tuple(moment.timetuple()[:6])
+    return None
+
+
+def moment_of(fields: tuple) -> datetime:
+    return datetime(*fields[:3], *(fields[3:6] or (0, 0, 0)))
+
+
+def said_step(seconds: int) -> str:
+    """A step between two dates in the largest unit that says it as a whole number or nearly: days, hours, minutes or
+    seconds."""
+    for unit, scale in (("day", 86_400), ("hour", 3_600), ("minute", 60), ("second", 1)):
+        if seconds >= scale or unit == "second":
+            value = round(seconds / scale, 2)
+            value = int(value) if value == int(value) else value
+            return f"{value} {unit}{'s' if value != 1 else ''}"
+
+
+def spacing(moments: list[datetime]) -> str:
+    """Sorted distinct dates' spacing, read over the steps between them in whole seconds: `business days` (weekdays
+    alone, a weekend skipped, the weekdays absent counted), `daily` (the days absent counted), a calendar class
+    (`CLASSES`), `intraday` (its most common step), each where at least `REGULAR` of the steps hold it, else
+    `irregular` with the steps' range and the most common where there are `IRREGULAR_DATES` dates or more; "" with
+    fewer than three dates."""
+    if len(moments) < 3:
+        return ""
+    steps = [round((later - earlier).total_seconds()) for earlier, later in zip(moments, moments[1:])]
+    common = Counter(steps).most_common(1)[0][0]
+    days = sorted({moment.date() for moment in moments})
+    label, regular = "", 0
+    if common < DAY:
+        label = f"intraday, most steps {said_step(common)}"
+        regular = steps.count(common)
+    elif common == DAY:
+        weekend = [step == 3 * DAY and earlier.weekday() == 4 for earlier, step in zip(moments, steps)]
+        if any(weekend) and all(day.weekday() < 5 for day in days):
+            span = (days[-1] - days[0]).days + 1
+            expected = sum(date.fromordinal(days[0].toordinal() + k).weekday() < 5 for k in range(span))
+            absent = expected - len(days)
+            label = "business days: weekdays alone" + (f", {absent:,} weekday{'s' if absent != 1 else ''} absent"
+                                                       if absent else ", every weekday")
+            regular = steps.count(DAY) + sum(weekend)
+        else:
+            absent = (days[-1] - days[0]).days + 1 - len(days)
+            label = "daily" + (f", {absent:,} day{'s' if absent != 1 else ''} absent" if absent else
+                               ", every calendar day")
+            regular = steps.count(DAY)
+    else:
+        for name, least, most in CLASSES:
+            if least * DAY <= common <= most * DAY:
+                label = name + calendar_note(name, moments)
+                regular = sum(least * DAY <= step <= most * DAY for step in steps)
+                break
+    if label and regular >= REGULAR * len(steps):
+        return label
+    if len(moments) < IRREGULAR_DATES:
+        return ""
+    return (f"irregular: steps from {said_step(min(steps))} to {said_step(max(steps))}, most often "
+            f"{said_step(common)}")
+
+
+def calendar_note(name: str, moments: list[datetime]) -> str:
+    """A weekly series' one weekday; a monthly, quarterly or yearly one's month ends or month starts."""
+    if name == "weekly":
+        weekdays = {moment.weekday() for moment in moments}
+        return f", on {WEEKDAYS[weekdays.pop()]}s" if len(weekdays) == 1 else ""
+    if all((moment.date().toordinal() + 1) == date(moment.year + moment.month // 12, moment.month % 12 + 1,
+                                                    1).toordinal() for moment in moments):
+        return ", at month ends"
+    if all(moment.day == 1 for moment in moments):
+        return ", on the first of the month"
+    return ""
+
+
 def moment(cell: object, named: bool = False) -> datetime | None:
     """A cell as a date: a date or datetime value; an ISO date or time, a slashed date, a month by name
-    (state.when); a year and month (`2020-01`); an eight-digit day (`20200131`) where `named` (the column's name
+    (`when`); a year and month (`2020-01`); an eight-digit day (`20200131`) where `named` (the column's name
     says a date); None where it reads as none."""
     if isinstance(cell, datetime):
         return cell.replace(tzinfo=None)
@@ -246,8 +187,8 @@ def moment(cell: object, named: bool = False) -> datetime | None:
             return datetime(int(found.group(1)), int(found.group(2)), 1)
         if named and COMPACT_DAY.fullmatch(text):
             return datetime(int(text[:4]), int(text[4:6]), int(text[6:]))
-        fields = state.when(text)
-        return inputs.moment_of(fields) if fields is not None else None
+        fields = when(text)
+        return moment_of(fields) if fields is not None else None
     except (ValueError, OverflowError):
         return None
 
@@ -266,9 +207,9 @@ class Series:
 
     @property
     def regular(self) -> bool:
-        """Its dates at one spacing (inputs.spacing: business days, daily, a calendar class, intraday) with no gap
+        """Its dates at one spacing (`spacing`: business days, daily, a calendar class, intraday) with no gap
         past `GAPS` steps and `GAP_DAYS` (a weekend and a holiday): a series, not a list of dates a condition picks."""
-        spaced = inputs.spacing(list(self.dates))
+        spaced = spacing(list(self.dates))
         gap = max(later - earlier for earlier, later in zip(self.dates, self.dates[1:]))
         return bool(spaced) and not spaced.startswith("irregular") and gap <= GAPS * self.step + GAP_DAYS
 
@@ -507,6 +448,10 @@ def nearest(sentence: str, names: list[tuple[int, int, str]], at: int) -> list[s
         return [name for _, _, name in reversed(chain)]
     after = [each for each in names if each[0] >= at]
     return [after[0][2]] if after else []
+
+
+def listed(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
 SCALE_SAID = {("percent", "low"): "is in percent, and the values read as decimals",

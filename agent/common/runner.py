@@ -1,20 +1,23 @@
-"""The model's script: taken from its reply, saved under /tmp, run as `python3 <file>` under a timeout.
+"""Runs one of the model's scripts in its own process group under a timeout, and bounds what it printed. It also
+holds the text helpers for taking code out of a reply and for joining a script that arrived in two replies.
 
-/tmp is the platform's only writable place besides the output directory, a 64 MiB `noexec` tmpfs, so a script runs
-through the interpreter, never by its own path (docs/dry-day.md 3e), in its own process group, which a timeout or
-the watchdog kills whole. Its output goes to files in its work directory, never a pipe, so a chatty script cannot
-stall on a full one. It runs without the House's variables, so only the agent spends the unit's requests, and with
-`OUTPUT_DIR` naming the output directory where its runner is given one (`child_env`), as the public tasks read it. Under the
-desk's trace (`common.trace`) each script is written before it runs and its run after, `kind` telling the agent's
-scripts from L1's checks program and N3's inspection. What a run printed comes back to the model bounded in characters
-(`ends`, then `bounded`): its head and its tail, the middle cut with a marker saying how much. A script built over
-several replies (N7's parts and stitches) is joined at a statement boundary (`stitch`), outlined for a prompt that
-shows only part of it (`outline`, `inside`), and repaired by splicing the definitions a reply changes (`splice`, `whole`).
-N8 reads whether a script runs what it defines (`has_driver`), the function a driver would call (`entry`,
-`with_driver`), and the definitions a run's traceback names innermost (`traceback_definitions`) and their size
-(`definition_bytes`). N10's runs (`BoundedRunner`) pipe stdout and stderr through a bounded writer (`Tail`, drained by
-a thread a stream, `run_bounded`), each kept to its last `STREAM_CAP_BYTES`, so a script that prints without end fills
-neither memory nor /tmp past that.
+Step: 3 and 4.
+Called by: agent/n11/commands.py (`run_bounded`, `child_env`, `bounded`), agent/n11/drafts.py (`Runner`, `extract`)
+    and agent/n11/solve.py (`stitch` and the parsing helpers).
+Start at: `run_bounded` for running, `stitch` for joining.
+
+The rules in detail
+-------------------
+The model's script: taken from its reply, saved in its work directory, run as `python3 <file>` under a timeout.
+
+/tmp is the platform's only writable place besides the output directory, a `noexec` tmpfs, so a script runs through
+the interpreter, never by its own path, in its own process group, which a timeout or the watchdog kills whole. It runs
+without the platform's model variables, so only the agent spends the unit's requests, and with `OUTPUT_DIR` naming
+the output directory (`child_env`). What a run printed comes back to the model bounded in characters (`bounded`): its
+head and its tail, the middle cut with a marker saying how much. A script cut at the output limit and continued in a
+later reply is joined at a statement boundary (`stitch`). `run_bounded` pipes a run's stdout and stderr through a
+bounded writer (`Tail`), each kept to its last `STREAM_CAP_BYTES`, so a script that prints without end fills neither
+memory nor /tmp.
 """
 from __future__ import annotations
 
@@ -33,8 +36,6 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-
-from . import trace
 
 PYTHON_TAGS = ("python", "py", "python3")
 THINK = re.compile(r"<think>.*?(</think>|\Z)", re.S)
@@ -124,8 +125,8 @@ def append(partial: str, reply: str) -> str:
 
 
 def parsing_prefix(code: str) -> str:
-    """A cut script's longest prefix of whole lines that compiles, "" where none does (N1's salvage): tried from the
-    end, a line at a time, a blank or comment line never the last. `compile`, not `ast.parse`: a prefix the parser
+    """A cut script's longest prefix of whole lines that compiles, "" where none does: tried from the end, a line at a
+    time, a blank or comment line never the last. `compile`, not `ast.parse`: a prefix the parser
     takes and the compiler refuses (a `return` outside a function) would not run either; a line it refuses outright
     (a lone surrogate, an expression nested past the parser's stack or chained past the compiler's recursion limit)
     ends a prefix as a syntax error does."""
@@ -147,8 +148,7 @@ def bounded(text: str, limit: int, unread: int = 0, marker: str = CUT) -> str:
     """`text` whole where it is at most `limit` characters and nothing was left `unread`; else its head and its tail,
     about half each, with `marker` between them (`CUT`, saying how many characters went, the `unread` ones counted
     in; a marker with no `{}` says none), in at most `limit` characters all told. Each cut moves to a line's end
-    where one falls in the outer quarter of its half.
-    Text read by `ends(path, size)` with `size` at least `2 * limit` has its two pieces' junction inside the cut."""
+    where one falls in the outer quarter of its half."""
     if len(text) <= limit and not unread:
         return text
     room = max(0, limit - len(marker.format(len(text) + unread)))
@@ -167,23 +167,6 @@ def bounded(text: str, limit: int, unread: int = 0, marker: str = CUT) -> str:
     return text[:cut_from].removesuffix("\n") + marker.format(cut_to - cut_from + unread) + text[cut_to:]
 
 
-def ends(path: Path, size: int) -> tuple[str, int]:
-    """A file's text, whole where it holds at most `2 * size` bytes, else its first and last `size` bytes' and the
-    bytes between them left unread (`bounded`'s `unread`): a file of any size costs at most `2 * size` bytes read.
-    ("", 0) where it cannot be read."""
-    try:
-        total = os.path.getsize(path)
-        with open(path, "rb") as handle:
-            if total <= 2 * size:
-                return handle.read().decode("utf-8", errors="replace"), 0
-            head = handle.read(size)
-            handle.seek(total - size)
-            tail = handle.read(size)
-    except OSError:
-        return "", 0
-    return head.decode("utf-8", errors="ignore") + tail.decode("utf-8", errors="ignore"), total - 2 * size
-
-
 @dataclass(frozen=True)
 class Run:
     exit: int | None        # None: killed at its timeout (or by the watchdog)
@@ -194,19 +177,14 @@ class Run:
     def failed(self) -> bool:
         return self.exit != 0 or TRACEBACK in self.stderr
 
-    def why(self) -> str:
-        return "it was stopped at its time limit" if self.exit is None else f"it exited with status {self.exit}"
 
-
-def child_env(out: Path | None = None) -> dict[str, str]:
-    """A script's environment: the agent's without the House's variables, the runner's own, and where `out` is given
-    `OUTPUT_ENV` naming it (absolute: a script runs from its work directory), unless the environment names one."""
+def child_env(out: Path) -> dict[str, str]:
+    """A script's environment: the agent's without the platform's model variables and the agent's own settings, the
+    runner's own, and `OUTPUT_ENV` naming `out` (absolute: a script runs from its work directory)."""
     env = {name: value for name, value in os.environ.items()
            if name not in HOUSE_ENV and not name.startswith("AGENTHON_")}
     env.update(MPLBACKEND="Agg", PYTHONDONTWRITEBYTECODE="1", PYTHONHASHSEED="0", PYTHONUNBUFFERED="1")
-    # the platform binds the output at /app/output and /output and sets no variable (SUBMISSION_CLI.md lines 12-13)
-    if out is not None and not env.get(OUTPUT_ENV, "").strip():
-        env[OUTPUT_ENV] = str(Path(out).absolute())
+    env[OUTPUT_ENV] = str(Path(out).absolute())
     return env
 
 
@@ -225,8 +203,8 @@ class Runner:
     """Runs one script at a time in `work`, `out` its environment's output directory (`child_env`); `kill` ends the one
     running, from any thread."""
 
-    def __init__(self, work: Path, python: str = sys.executable, kind: str = "script", out: Path | None = None) -> None:
-        self.work, self.python, self.kind, self.out = Path(work), python, kind, out
+    def __init__(self, work: Path, *, out: Path) -> None:
+        self.work, self.out = Path(work), out
         self.current: subprocess.Popen | None = None
         self.lock = threading.Lock()
         self.runs = 0
@@ -236,11 +214,10 @@ class Runner:
         script = self.work / f"solve_{self.runs}.py"
         script.write_text(code, encoding="utf-8")
         out, err = self.work / f"solve_{self.runs}.out", self.work / f"solve_{self.runs}.err"
-        trace.script(self.kind, self.runs, code, timeout)
         began = time.monotonic()
         with open(out, "wb") as stdout, open(err, "wb") as stderr:
             with self.lock:
-                self.current = subprocess.Popen([self.python, str(script)], cwd=self.work, stdin=subprocess.DEVNULL,
+                self.current = subprocess.Popen([sys.executable, str(script)], cwd=self.work, stdin=subprocess.DEVNULL,
                                                 stdout=stdout, stderr=stderr, env=child_env(self.out),
                                                 start_new_session=True)
             try:
@@ -252,13 +229,7 @@ class Runner:
             finally:
                 with self.lock:
                     self.current = None
-        ran = Run(None if code_ == -signal.SIGKILL else code_, time.monotonic() - began, tail(err))
-        trace.ran(self.kind, self.runs, ran.exit, ran.seconds, out, err)
-        return ran
-
-    def stdout(self) -> Path:
-        """The last run's stdout file (its stderr's tail is `Run.stderr`)."""
-        return self.work / f"solve_{self.runs}.out"
+        return Run(None if code_ == -signal.SIGKILL else code_, time.monotonic() - began, tail(err))
 
     def kill(self) -> None:
         """The running script's whole process group, killed; nothing where none runs."""
@@ -273,13 +244,9 @@ class Runner:
 
 # ------------------------------------------------------------------------------------- a script over several replies
 
-OUTLINE_BYTES = 2_000       # `outline`'s text, at most
-SIGNATURE_CHARS = 120       # a function's arguments as `outline` shows them, at most
-HEADER_CHARS = 80           # a block's first line as `inside`, `outline` and `splice` give it, at most
 DEFINITIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 COMPOUND = (ast.For, ast.AsyncFor, ast.While, ast.If, ast.With, ast.AsyncWith, ast.Try, *DEFINITIONS,
             *((ast.TryStar,) if hasattr(ast, "TryStar") else ()), *((ast.Match,) if hasattr(ast, "Match") else ()))
-SCOPES = (*DEFINITIONS, ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 
 
 def compiles(code: str) -> bool:
@@ -332,16 +299,6 @@ def _last_chain(tree: ast.Module) -> list[ast.stmt]:
     return chain
 
 
-def inside(code: str) -> list[str]:
-    """The first lines of the blocks a script's last statement sits in, outermost first (`def main():`, `for row in
-    rows:`); [] where it sits at the top level or the script does not parse."""
-    tree = parse(code)
-    if tree is None:
-        return []
-    lines = code.split("\n")
-    return [lines[node.lineno - 1].strip()[:HEADER_CHARS] for node in _last_chain(tree)[:-1]]
-
-
 def depth(code: str) -> str:
     """The indentation of a script's last statement (its first line's); "" at the top level or where it does not
     parse."""
@@ -353,70 +310,9 @@ def depth(code: str) -> str:
     return line[:len(line) - len(line.lstrip())]
 
 
-def _stored(nodes: list[ast.AST]) -> list[str]:
-    """The names these bind, in their order: assigned, looped over, imported, defined; the bodies of the functions,
-    classes, lambdas and comprehensions inside them left out."""
-    found: list[str] = []
-    stack: list[ast.AST] = list(reversed(nodes))
-    while stack:
-        node = stack.pop()
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-            found.append(node.id)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            found += _imported([node])
-        if isinstance(node, DEFINITIONS):
-            found.append(node.name)
-        if isinstance(node, SCOPES):
-            continue
-        stack.extend(reversed(list(ast.iter_child_nodes(node))))
-    return list(dict.fromkeys(found))
-
-
-def _imported(nodes: list[ast.stmt]) -> list[str]:
-    """The names these import statements bind."""
-    found = []
-    for node in nodes:
-        if isinstance(node, ast.Import):
-            found += [alias.asname or alias.name.split(".")[0] for alias in node.names]
-        elif isinstance(node, ast.ImportFrom):
-            found += [alias.asname or alias.name for alias in node.names]
-    return list(dict.fromkeys(found))
-
-
 def _is_main(node: ast.stmt) -> bool:
     """`if __name__ == "__main__":`."""
     return isinstance(node, ast.If) and "__name__" in ast.unparse(node.test) and "__main__" in ast.unparse(node.test)
-
-
-def outline(code: str, limit: int = OUTLINE_BYTES, *, cut: bool = True) -> str:
-    """The names a script defines, for a prompt that shows only some of its lines: its imports, its functions with
-    their arguments, its classes with their bases, the other names its top level assigns, its main block, and, for a
-    script `cut` inside a function, the names bound so far in each function its last statement sits in. A line a kind,
-    at most `limit` characters in all; "" where it does not parse."""
-    tree = parse(code)
-    if tree is None:
-        return ""
-    lines = code.split("\n")
-    imports = [ast.unparse(node)[:HEADER_CHARS] for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
-    functions = [f"{node.name}({ast.unparse(node.args)[:SIGNATURE_CHARS]})" for node in tree.body
-                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    classes = [node.name + (f"({', '.join(ast.unparse(base) for base in node.bases)})" if node.bases else "")
-               for node in tree.body if isinstance(node, ast.ClassDef)]
-    assigned = _stored([target for node in tree.body for target in (
-        node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, (ast.AnnAssign,
-                                                                                               ast.AugAssign)) else [])])
-    said = [f"- imports: {'; '.join(imports)}" if imports else "",
-            f"- functions: {', '.join(functions)}" if functions else "",
-            f"- classes: {', '.join(classes)}" if classes else "",
-            f"- other top-level names: {', '.join(assigned)}" if assigned else "",
-            '- a main block: `if __name__ == "__main__":`' if any(_is_main(node) for node in tree.body) else ""]
-    for node in _last_chain(tree)[:-1] if cut else ():
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            names = [arg.arg for arg in ast.walk(node.args) if isinstance(arg, ast.arg)] + _stored(node.body)
-            said.append(f"- bound so far in `{lines[node.lineno - 1].strip()[:HEADER_CHARS]}`: "
-                        f"{', '.join(dict.fromkeys(names)) or 'nothing'}")
-    text = "\n".join(line for line in said if line)
-    return text if len(text) <= limit else text[:max(0, limit - 4)] + " ..."
 
 
 def _readings(kept: str, rest: str) -> list[tuple[str, str]]:
@@ -476,9 +372,8 @@ def _read(kept: str, readings: list[tuple[str, str]]) -> tuple[str, str]:
     return best, how
 
 
-UNIFORM = "shifted by one amount"       # lane join2: how `stitch` names its two readings past `_readings`
+UNIFORM = "shifted by one amount"       # how `stitch` names its two readings past `_readings`
 OPENING = "its opening run shifted"
-REREAD = (UNIFORM, OPENING)
 
 
 def _indent(line: str) -> int:
@@ -486,7 +381,7 @@ def _indent(line: str) -> int:
 
 
 def frame(kept: str) -> tuple[int, bool]:
-    """Lane join2: the indentation `kept`'s open frame wants its next line at, and whether that frame is a bracket:
+    """The indentation `kept`'s open frame wants its next line at, and whether that frame is a bracket:
     its last statement's where it parses; else its last line of code's, one level deeper where that line opens a
     block. Tokens distinguish an open bracket from a header, string or clause still due."""
     if parse(kept) is not None:
@@ -510,7 +405,7 @@ def frame(kept: str) -> tuple[int, bool]:
 
 
 def shifted(rest: str, by: int, opening: bool = False, closing: bool = False) -> str:
-    """Lane join2: `rest` with `by` spaces of indentation taken from each line that has them (the others as written),
+    """`rest` with `by` spaces of indentation taken from each line that has them (the others as written),
     or given to each where `by` is negative; under `opening` only its opening run: its lines up to the first shallower
     than its first, that one too where it is `closing` a bracket, the rest as written."""
     lines = rest.split("\n")
@@ -528,17 +423,17 @@ def shifted(rest: str, by: int, opening: bool = False, closing: bool = False) ->
 
 
 def share(code: str) -> float:
-    """Lane join2: the share of `code`'s lines its longest compiling prefix holds (`parsing_prefix`), 1 where it
+    """The share of `code`'s lines its longest compiling prefix holds (`parsing_prefix`), 1 where it
     compiles whole."""
     return 1.0 if compiles(code) else parsing_prefix(code).count("\n") / max(code.count("\n"), 1)
 
 
 def _reread(kept: str, rest: str, lines: int, found: tuple[str, str], again: bool) -> tuple[str, str]:
-    """Lane join2, N11's continuation: `found`, today's join, unless it fails and a reading past `_readings` compiles,
-    the rest shifted by one amount so its first line sits where the head's open frame wants it (`UNIFORM`), then its
-    opening run alone (`OPENING`), the first that compiles taken; for a rest cut `again`, which no reading may compile
-    whole, the one whose longest compiling prefix holds the greatest share of its lines (`share`), ties to today's.
-    Under the head less a repeated end (`lines`), as the overlap reads it."""
+    """`found`, the join so far, unless it fails and a reading past `_readings` compiles: the rest shifted by one
+    amount so its first line sits where the head's open frame wants it (`UNIFORM`), then its opening run alone
+    (`OPENING`), the first that compiles taken; for a rest cut `again`, which no reading may compile whole, the one
+    whose longest compiling prefix holds the greatest share of its lines (`share`), ties to `found`. Under the head
+    less a repeated end (`lines`), as the overlap reads it."""
     if not again and compiles(found[0]):
         return found
     head = unrepeated(kept, lines) if lines else kept
@@ -564,12 +459,11 @@ def stitch(kept: str, reply: str, *, overlap: bool = False, again: bool = False)
     statement (`_readings`), each joined by `append` (which drops lines repeating `kept`'s end) and the reading whose
     longest compiling prefix holds the most lines taken, the first among equals. A reply that starts again from `kept`'s first
     line is taken past `kept` where it repeats `kept` line for line, else as the script itself (restarted); a reply
-    with no code adds nothing. Under `overlap` (N11's continuation, lane join1), where the reply opens with `kept`'s
-    last lines, whitespace aside (`repeated`, the most that match), those lines go in once as the reply has them:
-    `kept` less them (`unrepeated`) and the reply's readings under it, the first that compiles taken (`OVERLAP`
-    naming the reading); else today's joins where one compiles; else the overlap's reading whose longest compiling
-    prefix holds the most lines. Under `overlap` too (lane join2), where that join does not compile, or the reply
-    was cut `again`, two readings more (`_reread`)."""
+    with no code adds nothing. Under `overlap`, where the reply opens with `kept`'s last lines, whitespace aside
+    (`repeated`, the most that match), those lines go in once as the reply has them: `kept` less them (`unrepeated`)
+    and the reply's readings under it, the first that compiles taken (`OVERLAP` naming the reading); else the plain
+    joins where one compiles; else the overlap's reading whose longest compiling prefix holds the most lines. Under
+    `overlap` too, where that join does not compile, or the reply was cut `again`, two readings more (`_reread`)."""
     rest = continuation(reply)
     if not rest.strip():
         return kept, "nothing added"
@@ -582,129 +476,20 @@ def stitch(kept: str, reply: str, *, overlap: bool = False, again: bool = False)
         rest = "\n".join(new[len(old):])
         if not rest.strip():
             return kept, "repeated, nothing added"
-    today = [(append(kept, reading), said) for reading, said in _readings(kept, rest)]
+    plain = [(append(kept, reading), said) for reading, said in _readings(kept, rest)]
     lines = repeated(kept, rest) if overlap else 0
     if not lines:
-        found = _read(kept, today)
+        found = _read(kept, plain)
     else:
         head = unrepeated(kept, lines)
         taken = [(head + reading.strip("\n") + "\n", f"{OVERLAP}, {said}") for reading, said in _readings(head, rest)]
-        found = next(((joined, said) for joined, said in taken + today if compiles(joined)), None) or \
+        found = next(((joined, said) for joined, said in taken + plain if compiles(joined)), None) or \
             _read(kept, taken)
     return _reread(kept, rest, lines, found, again) if overlap else found
 
 
-def _start(node: ast.stmt) -> int:
-    """A statement's first line, its decorators included."""
-    return min([node.lineno] + [decorator.lineno for decorator in getattr(node, "decorator_list", ())])
+# ------------------------------------------------------------------------------------------------ what runs a script
 
-
-def _runs(node: ast.stmt) -> bool:
-    """A top-level statement that runs code when the script runs: not an import, a definition, a docstring, or an
-    assignment whose value calls nothing."""
-    if isinstance(node, (ast.Import, ast.ImportFrom, *DEFINITIONS)):
-        return False
-    if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
-        return False
-    if isinstance(node, (ast.Assign, ast.AnnAssign)):
-        return node.value is not None and any(isinstance(inner, ast.Call) for inner in ast.walk(node.value))
-    return True
-
-
-def _key(node: ast.stmt) -> tuple | None:
-    """What a top-level statement is matched on when a patch replaces it: a definition's name, the main block, an
-    assignment's targets, a compound statement's first line; None for any other."""
-    if isinstance(node, DEFINITIONS):
-        return ("def", node.name)
-    if _is_main(node):
-        return ("main",)
-    if isinstance(node, ast.Assign):
-        return ("assign", " = ".join(ast.unparse(target) for target in node.targets))
-    if isinstance(node, ast.AnnAssign):
-        return ("assign", ast.unparse(node.target))
-    if isinstance(node, COMPOUND):
-        return ("header", ast.unparse(node).split("\n", 1)[0])
-    return None
-
-
-def whole(script: str, reply: str) -> bool:
-    """`reply` can run in `script`'s place by itself: it parses and runs code at its top level, and, where `script`
-    parses, imports every name `script` imports there and defines every function and class `script` defines there
-    or is at least as long."""
-    tree, fix = parse(script), parse(reply)
-    if fix is None or not any(_runs(node) for node in fix.body):
-        return False
-    if tree is None:
-        return True
-    if not set(_imported(tree.body)) <= set(_imported(fix.body)):
-        return False
-    return {node.name for node in tree.body if isinstance(node, DEFINITIONS)} <= \
-        {node.name for node in fix.body if isinstance(node, DEFINITIONS)} or len(reply) >= len(script)
-
-
-def splice(script: str, patch: str) -> tuple[str, dict[str, list[str]]] | None:
-    """`script` with the top-level statements of `patch` put in, and what became of each; None where either does
-    not parse. A statement `script` already holds is left (`unchanged`). A function or class replaces the last of
-    its name, and the main block (`if __name__ == "__main__":`) `script`'s; an assignment to the same targets or a
-    compound statement with the same first line (`_key`) replaces the one statement it matches, where exactly one
-    does (`replaced`). Otherwise a new import goes after `script`'s last import, a new function, class or constant
-    before the first statement that runs code (`_runs`: past the imports, definitions and constants), or at the end
-    (`added`); any other statement is appended, before the main block where the script ends in one (the main
-    guard, or a last bare call of a function it defines), else at the end (`appended`)."""
-    tree, fix = parse(script), parse(patch)
-    if tree is None or fix is None:
-        return None
-    lines, theirs, body = script.rstrip("\n").split("\n"), patch.split("\n"), tree.body
-    keys = [_key(node) for node in body]
-    defined = {node.name for node in body if isinstance(node, DEFINITIONS)}
-    first_run = next((k for k, node in enumerate(body) if _runs(node)), len(body))
-    imports = [k for k, node in enumerate(body) if isinstance(node, (ast.Import, ast.ImportFrom))]
-    main = next((k for k, node in enumerate(body) if _is_main(node)), None)
-    if main is None and body and isinstance(body[-1], ast.Expr) and isinstance(body[-1].value, ast.Call) \
-            and isinstance(body[-1].value.func, ast.Name) and body[-1].value.func.id in defined:
-        main = len(body) - 1
-    held = {ast.unparse(node) for node in body}
-    replace: dict[int, str] = {}
-    before: dict[int, list[str]] = {}
-    after: list[str] = []                           # new imports, right after the last import
-    report: dict[str, list[str]] = {"replaced": [], "added": [], "appended": [], "unchanged": []}
-    for node in fix.body:
-        text = "\n".join(theirs[_start(node) - 1:node.end_lineno]).rstrip()
-        key = _key(node)
-        label = node.name if isinstance(node, DEFINITIONS) else ast.unparse(node).split("\n", 1)[0][:HEADER_CHARS]
-        same = [k for k, found in enumerate(keys) if key is not None and found == key]
-        if ast.unparse(node) in held:
-            report["unchanged"].append(label)
-        elif same and (key[0] in ("def", "main") or len(same) == 1):
-            replace[same[-1]] = text
-            report["replaced"].append(label)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            (after if imports else before.setdefault(0, [])).append(text)
-            report["added"].append(label)
-        elif not _runs(node):
-            before.setdefault(first_run, []).append(text)
-            report["added"].append(label)
-        else:
-            before.setdefault(main if main is not None else len(body), []).append(text)
-            report["appended"].append(label)
-    out: list[str] = lines[:_start(body[0]) - 1] if body else list(lines)
-    for k, node in enumerate(body):
-        for text in before.get(k, ()):
-            out += text.split("\n") + [""]
-        out += replace[k].split("\n") if k in replace else lines[_start(node) - 1:node.end_lineno]
-        if imports and k == imports[-1]:
-            for text in after:
-                out += text.split("\n")
-        out += lines[node.end_lineno:_start(body[k + 1]) - 1] if k + 1 < len(body) else lines[node.end_lineno:]
-    for text in before.get(len(body), ()):
-        out += [""] + text.split("\n")
-    return "\n".join(out).rstrip("\n") + "\n", report
-
-
-# ------------------------------------------------------------------------- what runs a script, what a traceback names
-
-FRAME = re.compile(r'^\s*File "(?P<file>[^"\n]*)", line (?P<line>\d+), in (?P<name>\S+)', re.M)
-OWN_FILE = re.compile(r"solve_\d+\.py")     # the runner's name for a script it runs (`Runner.run`)
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
@@ -760,67 +545,24 @@ def entry(code: str) -> str | None:
     return bare[0].name if bare and bare[0] is functions[-1] else None   # the first so callable, last: the only one
 
 
-def with_driver(code: str) -> str | None:
-    """`code` with a main guard calling its `entry` appended at its end; None where it names no entry or the result
-    does not compile."""
-    name = entry(code)
-    if name is None:
-        return None
-    text = f'{code.rstrip()}\n\n\nif __name__ == "__main__":\n    {name}()\n'
-    return text if compiles(text) else None
-
-
-def traceback_definitions(stderr: str, script: str) -> list[str]:
-    """The top-level functions and classes of `script` its run's traceback names innermost: for each traceback in
-    `stderr` (a chained exception shows several; the tail kept may have lost the first one's head), its innermost
-    frame in the script's own file (`OWN_FILE`, the frames of libraries passed over), named by the top-level
-    definition whose lines hold that frame's line (a method by its class, a nested function by the one it sits in);
-    the last traceback's first, none twice. [] where no such frame lies inside a top-level definition (the error is
-    raised at the script's top level) or the script does not parse."""
-    tree = parse(script)
-    if tree is None:
-        return []
-    spans = [(_start(node), node.end_lineno or node.lineno, node.name) for node in tree.body
-             if isinstance(node, DEFINITIONS)]
-    found: list[str] = []
-    for chunk in reversed(stderr.split(TRACEBACK)):
-        own = [int(match.group("line")) for match in FRAME.finditer(chunk)
-               if OWN_FILE.fullmatch(match.group("file").replace("\\", "/").rsplit("/", 1)[-1])]
-        if own:
-            found += [name for first, last, name in spans if first <= own[-1] <= last and name not in found]
-    return found
-
-
-def definition_bytes(script: str, names: list[str]) -> int:
-    """The bytes the top-level definitions named take in `script`, taken together, decorators included: the last of
-    each name (the one a splice replaces); 0 where it does not parse."""
-    tree = parse(script)
-    if tree is None:
-        return 0
-    lines = script.split("\n")
-    last = {node.name: node for node in tree.body if isinstance(node, DEFINITIONS) and node.name in names}
-    return sum(len("\n".join(lines[_start(node) - 1:node.end_lineno]).encode("utf-8")) for node in last.values())
-
-
 # ---------------------------------------------------------------------------- a run's output through a bounded writer
 
-STREAM_CAP_BYTES = 1 << 20      # a run's stdout and stderr, each, kept to its last MiB: the platform's /tmp, where the
-#                                 work directory sits, is a 64 MiB tmpfs, and a repair shows a few KB of either
+STREAM_CAP_BYTES = 1 << 20      # a run's stdout and stderr, each, kept to its last MiB: the work directory's /tmp is a
+#                                 64 MiB tmpfs
 CHUNK_BYTES = 1 << 16           # one read of a stream's pipe
 DRAIN_S = 5.0                   # a stream's reader is waited on this long once the run has ended
 
 
 class Tail:
-    """The bounded writer: the last `cap` bytes written to it, and how many were written in all (`total`)."""
+    """The bounded writer: the last `cap` bytes written to it."""
 
     def __init__(self, cap: int = STREAM_CAP_BYTES) -> None:
-        self.cap, self.total, self.held = max(0, cap), 0, 0
+        self.cap, self.held = max(0, cap), 0
         self.chunks: deque[bytes] = deque()
         self.lock = threading.Lock()
 
     def write(self, data: bytes) -> None:
         with self.lock:
-            self.total += len(data)
             self.chunks.append(data)
             self.held += len(data)
             while self.chunks and self.held - len(self.chunks[0]) >= self.cap:
@@ -854,14 +596,13 @@ def kill_group(proc: subprocess.Popen) -> None:
 
 
 def run_bounded(argv: list[str], timeout: float, *, cwd: Path | None = None, env: dict[str, str] | None = None,
-                cap: int = STREAM_CAP_BYTES, hold: Callable[[subprocess.Popen | None], None] | None = None,
-                stop: Callable[[subprocess.Popen], None] = kill_group) -> tuple[int | None, float, Tail, Tail]:
+                hold: Callable[[subprocess.Popen | None], None] | None = None) -> tuple[int | None, float, Tail, Tail]:
     """`argv` in a session of its own, its stdin empty, its stdout and stderr each through the bounded writer on a
-    pipe its own thread drains; `stop(proc)` at `timeout` (its process group killed, by default). `hold` is given
-    the process as it starts and None as it ends (a runner's handle for a kill from another thread). Once it has
-    ended, whatever its group left running is killed and the readers are joined, `DRAIN_S` each at most. Its exit
-    (None: stopped at `timeout`, or killed by SIGKILL), its seconds, and its stdout's and stderr's `Tail`."""
-    out, err = Tail(cap), Tail(cap)
+    pipe its own thread drains; its process group killed at `timeout`. `hold` is given the process as it starts and
+    None as it ends (a runner's handle for a kill from another thread). Once it has ended, whatever its group left
+    running is killed and the readers are joined, `DRAIN_S` each at most. Its exit (None: stopped at `timeout`, or
+    killed by SIGKILL), its seconds, and its stdout's and stderr's `Tail`."""
+    out, err = Tail(), Tail()
     began = time.monotonic()
     proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             env=env, start_new_session=True)
@@ -871,7 +612,7 @@ def run_bounded(argv: list[str], timeout: float, *, cwd: Path | None = None, env
     try:
         code = proc.wait(timeout=max(0.0, timeout))
     except subprocess.TimeoutExpired:
-        stop(proc)
+        kill_group(proc)
         proc.wait()
         code = None
     finally:
@@ -884,34 +625,3 @@ def run_bounded(argv: list[str], timeout: float, *, cwd: Path | None = None, env
         if not reader.is_alive():
             pipe.close()
     return (None if code == -signal.SIGKILL else code), seconds, out, err
-
-
-class BoundedRunner(Runner):
-    """`Runner` (`Runner.run` unchanged) whose run's stdout and stderr go through the bounded writer
-    (`run_bounded`), each written to the run's file at its end, its last `cap` bytes; `sizes` holds the last run's
-    whole stdout and stderr bytes. The script, its files, its trace events and its `Run` are `Runner.run`'s."""
-
-    def __init__(self, work: Path, python: str = sys.executable, kind: str = "script",
-                 cap: int = STREAM_CAP_BYTES, out: Path | None = None) -> None:
-        super().__init__(work, python, kind, out)
-        self.cap = cap
-        self.sizes = (0, 0)
-
-    def hold(self, proc: subprocess.Popen | None) -> None:
-        with self.lock:
-            self.current = proc
-
-    def run(self, code: str, timeout: float) -> Run:
-        self.runs += 1
-        script = self.work / f"solve_{self.runs}.py"
-        script.write_text(code, encoding="utf-8")
-        out, err = self.work / f"solve_{self.runs}.out", self.work / f"solve_{self.runs}.err"
-        trace.script(self.kind, self.runs, code, timeout)
-        exit_, seconds, stdout, stderr = run_bounded([self.python, str(script)], timeout, cwd=self.work,
-                                                     env=child_env(self.out), cap=self.cap, hold=self.hold)
-        out.write_bytes(stdout.value())
-        err.write_bytes(stderr.value())
-        self.sizes = (stdout.total, stderr.total)
-        ran = Run(exit_, seconds, tail(err))
-        trace.ran(self.kind, self.runs, ran.exit, ran.seconds, out, err)
-        return ran
