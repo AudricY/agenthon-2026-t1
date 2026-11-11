@@ -151,8 +151,8 @@ message does not mention the draft.
 **Model output** (abridged)
 
 ````text
-model   | I'll solve this step by step. Let me start by understanding the task and writing the complete
-        |     solution.
+model   | I'll solve this step by step. Let me start by understanding the task and writing
+        |     the complete solution.
 model   | [...]
 model   | Let me write the complete solution:
 model   |
@@ -212,8 +212,9 @@ harness | budget: 17 request(s) and 523 s left; missing: copula_fits.csv, best_c
         |     tail_dependence.csv, summary.json
 harness |
 harness | [write work/main.py (cut)]
-harness | not written: your reply was cut at the output limit inside this write of work/main.py, so the file
-        |     was not saved whole; what arrived is kept up to its last complete line, which ends:
+harness | not written: your reply was cut at the output limit inside this write of
+        |     work/main.py, so the file was not saved whole; what arrived is kept up to its last
+        |     complete line, which ends:
 harness |
 harness | ```python
 model   |     # 3. Clayton copula
@@ -222,9 +223,10 @@ model   |     if tau > 0:
 model   |         theta_clayton = 2 * tau / (1 - tau)
 harness | ```
 harness |
-harness | Reply with the rest of work/main.py only: every line after that last one, through the code that
-        |     runs it and writes every output file. One ```python block of code, no prose before or after it and
-        |     no line already written above; a reply past the limit is cut again.
+harness | Reply with the rest of work/main.py only: every line after that last one, through
+        |     the code that runs it and writes every output file. One ```python block of code,
+        |     no prose before or after it and no line already written above; a reply past the
+        |     limit is cut again.
 ````
 
 > **Notes.**
@@ -245,7 +247,8 @@ model   |     # Parameter from Kendall's tau: theta = 2*tau/(1-tau) for tau > 0
 model   |     if tau > 0:
 model   |         theta_clayton = 2 * tau / (1 - tau)
 model   |     else:
-model   |         theta_clayton = 1e-6  # Small positive value instead of 0 to avoid theta <= 0
+model   |         theta_clayton = 1e-6  # Small positive value instead of 0 to avoid theta
+        |             <= 0
 model   | [...]
 model   | print("Processing complete!")
 model   | ```
@@ -269,12 +272,13 @@ model   | ```
 
 ````text
 harness | [write work/main.py]
-harness | the rest joined under what was kept of work/main.py, the file whole: wrote work/main.py: 7,590 B;
-        |     compiles
+harness | the rest joined under what was kept of work/main.py, the file whole: wrote
+        |     work/main.py: 7,590 B; compiles
 harness |
 harness | [write work/main.py]
-harness | write refused: work/main.py unchanged from turn 2, which gave: no run; nothing was written and
-        |     nothing ran. Change the file to fix it, or run it as it is: a line `run work/main.py`
+harness | write refused: work/main.py unchanged from turn 2, which gave: no run; nothing was
+        |     written and nothing ran. Change the file to fix it, or run it as it is: a line
+        |     `run work/main.py`
 harness | (no run: work/main.py is unchanged since turn 2)
 harness | budget: 16 request(s) and 452 s left; missing: copula_fits.csv, best_copulas.json,
         |     tail_dependence.csv, summary.json
@@ -306,18 +310,22 @@ harness | [run work/main.py]
 harness | run work/main.py: exit 0 after 1.0 s
 harness | stdout (21 B):
 script  | Processing complete!
-harness | Files the script wrote: best_copulas.json (264 bytes), copula_fits.csv (3,956 bytes),
-        |     data_summary.json (134 bytes), summary.json (134 bytes), tail_dependence.csv (718 bytes).
+harness | Files the script wrote: best_copulas.json (264 bytes), copula_fits.csv (3,956
+        |     bytes), data_summary.json (134 bytes), summary.json (134 bytes),
+        |     tail_dependence.csv (718 bytes).
 harness | outputs:
-harness | - data_summary.json (134 B): n_stocks=5, n_returns=692, stock_list=5 items, n_pairs=10
-harness | - copula_fits.csv (3,956 B): 40 rows x 8 columns; param1 [-0.043552, 2.17921] 2 neg; param2
-        |     [5.13367, 9.03108]; loglik [-0.0995563, 278.308] 2 neg; aic [-552.616, 2.19911] 37 neg; bic
-        |     [-543.537, 6.7387] 36 neg; text: stock1, stock2, copula
-harness | - best_copulas.json (264 B): AAPL-JPM="student_t", AAPL-GS="student_t", AAPL-CVX="clayton",
-        |     AAPL-MSFT="student_t", JPM-GS="student_t", JPM-CVX="student_t", JPM-MSFT="student_t",
-        |     GS-CVX="student_t", GS-MSFT="student_t", CVX-MSFT="student_t"
-harness | - tail_dependence.csv (718 B): 10 rows x 5 columns; lambda_upper [0.0882353, 0.323529];
-        |     lambda_lower [0.147059, 0.5]; kendall_tau [-0.0277348, 0.521441] 1 neg; text: stock1, stock2
+harness | - data_summary.json (134 B): n_stocks=5, n_returns=692, stock_list=5 items,
+        |     n_pairs=10
+harness | - copula_fits.csv (3,956 B): 40 rows x 8 columns; param1 [-0.043552, 2.17921] 2
+        |     neg; param2 [5.13367, 9.03108]; loglik [-0.0995563, 278.308] 2 neg; aic [-552.616,
+        |     2.19911] 37 neg; bic [-543.537, 6.7387] 36 neg; text: stock1, stock2, copula
+harness | - best_copulas.json (264 B): AAPL-JPM="student_t", AAPL-GS="student_t",
+        |     AAPL-CVX="clayton", AAPL-MSFT="student_t", JPM-GS="student_t",
+        |     JPM-CVX="student_t", JPM-MSFT="student_t", GS-CVX="student_t",
+        |     GS-MSFT="student_t", CVX-MSFT="student_t"
+harness | - tail_dependence.csv (718 B): 10 rows x 5 columns; lambda_upper [0.0882353,
+        |     0.323529]; lambda_lower [0.147059, 0.5]; kendall_tau [-0.0277348, 0.521441] 1 neg;
+        |     text: stock1, stock2
 harness | - summary.json (134 B): n_pairs=10, most_common_best_copula="student_t",
         |     mean_kendall_tau=0.194627, has_tail_dependence=true
 harness | checks: all pass
@@ -365,8 +373,9 @@ The run above had no sanity finding. This exchange is from another run in the sa
 **Model output** (whole)
 
 ````text
-model   | The task has been completed successfully. All required output files have been generated and the
-        |     checks pass. The script runs within the time limit and produces the expected outputs.
+model   | The task has been completed successfully. All required output files have been
+        |     generated and the checks pass. The script runs within the time limit and produces
+        |     the expected outputs.
 model   |
 model   | Let me finalize by sending the finish command.
 model   |
@@ -385,24 +394,27 @@ model   | ```
 
 ````text
 harness | [finish]
-harness | finish refused: 1 sanity finding(s) stand; write a fix or write the line `finish accept: <why>`
-harness | - margrabe_prices.csv: column `sigma_exchange` is constant at 0.262729 over 3 values
+harness | finish refused: 1 sanity finding(s) stand; write a fix or write the line `finish
+        |     accept: <why>`
+harness | - margrabe_prices.csv: column `sigma_exchange` is constant at 0.262729 over 3
+        |     values
 harness | budget: 15 request(s) and 446 s left; every named output file is present
 ````
 
 **Model output** (the next reply, abridged)
 
 ````text
-model   | The sanity check indicates that the `sigma_exchange` column in `margrabe_prices.csv` is constant
-        |     across all maturities. [...]
+model   | The sanity check indicates that the `sigma_exchange` column in
+        |     `margrabe_prices.csv` is constant across all maturities. [...]
 model   | [...]
-model   | Since this is the expected behavior and not an error, I'll accept the finding with an explanation.
+model   | Since this is the expected behavior and not an error, I'll accept the finding with
+        |     an explanation.
 model   |
 model   | ```python
-model   | finish accept: The sigma_exchange column is constant because the exchange option volatility in the
-        |     Margrabe formula depends only on the underlying asset volatilities and their correlation
-        |     (σ_exchange = sqrt(σ1² + σ2² - 2ρσ1σ2)), not on time to maturity. This is mathematically correct
-        |     behavior.
+model   | finish accept: The sigma_exchange column is constant because the exchange option
+        |     volatility in the Margrabe formula depends only on the underlying asset
+        |     volatilities and their correlation (σ_exchange = sqrt(σ1² + σ2² - 2ρσ1σ2)), not on
+        |     time to maturity. This is mathematically correct behavior.
 model   | ```
 ````
 
